@@ -173,6 +173,47 @@ class RevealState(discord.ui.View):
         except Exception:
             pass
 
+        async def _maybe_hype(self, itx: discord.Interaction, card: dict):
+        """Post a hype message to HYPE_CHANNEL_ID for SR/SSR or God Pack (once)."""
+        # Channel configured?
+        if not HYPE_CHANNEL_ID:
+            return
+        chan = bot.get_channel(HYPE_CHANNEL_ID)
+        if not chan:
+            return
+
+        # God Pack? (announce once per session)
+        try:
+            if self.god and not getattr(self, "_hyped_god", False):
+                self._hyped_god = True
+                await chan.send(
+                    f"💥 {itx.user.mention} just opened a **GOD PACK** in **{self.pack_name}**!!!"
+                )
+                # don't return; still allow individual SR/SSR hype too if you want
+        except Exception:
+            pass
+
+        # Card-based hype (SR or above)
+        rarity = (card.get("rarity") or "").upper()
+        if rarity not in ("SR", "SSR"):
+            return
+
+        name = card.get("name") or "Unknown"
+        try:
+            msg = f"{itx.user.mention} just pulled out a **{rarity} {name}**!!! Congrats!"
+            img = card.get("image_ref")
+            if img:
+                emb = discord.Embed(color=0xFFD166 if rarity == "SSR" else 0xFFA654)
+                emb.set_image(url=img)
+                await chan.send(msg, embed=emb)
+            else:
+                await chan.send(msg)
+        except Exception:
+            # Never let hype failures break the reveal flow.
+            pass
+
+    
+    
     @discord.ui.button(label="Reveal Next", style=discord.ButtonStyle.primary)
     async def reveal_next(self, itx: discord.Interaction, _button: discord.ui.Button):
         if itx.user.id != self.owner_id:
@@ -207,6 +248,7 @@ class RevealState(discord.ui.View):
         if img:
             reveal_embed.set_image(url=img)
         await itx.message.edit(embed=reveal_embed, view=self)
+        await self._maybe_hype(itx, card)  
         if self.queue:
             return
         self.done = True
@@ -215,44 +257,7 @@ class RevealState(discord.ui.View):
         await itx.message.edit(view=self)
         await self._post_summary(itx)
 
-    @discord.ui.button(label="Reveal All", style=discord.ButtonStyle.secondary)
-    async def reveal_all(self, itx: discord.Interaction, _button: discord.ui.Button):
-        if itx.user.id != self.owner_id:
-            return await itx.response.send_message("Only the pack opener can use this.", ephemeral=True)
-        await itx.response.defer(thinking=False)
-        if self.done or not self.queue:
-            try:
-                await itx.message.edit(view=None)
-            except Exception:
-                pass
-            return
-        try:
-            await itx.message.edit(view=None)
-        except Exception:
-            pass
-        rarity_em = {"N":"⚪","R":"🟦","AR":"🟪","SR":"🟧","SSR":"🟨"}
-        while self.queue and not self.done:
-            card = self.queue.pop(0)
-            self.revealed += 1
-            name   = card.get("name", "(unknown)")
-            rarity = card.get("rarity", "")
-            serial = card.get("serial_no")
-            img    = card.get("image_ref")
-            em     = rarity_em.get(rarity, "📦")
-            color = 0x5865F2
-            if rarity == "SR":  color = 0xFFA654
-            if rarity == "SSR": color = 0xFFD166
-            embed = discord.Embed(
-                title=f"{em} {name} [{rarity}]" + (f"  •  #{serial}" if serial else ""),
-                description=f"Card {self.revealed}/{self.total}",
-                color=color,
-            )
-            if img:
-                embed.set_image(url=img)
-            await itx.followup.send(embed=embed)
-            await asyncio.sleep(0.3)
-        self.done = True
-        await self._post_summary(itx)
+    
 
     @discord.ui.button(label="Close", style=discord.ButtonStyle.danger)
     async def close(self, itx: discord.Interaction, _button: discord.ui.Button):
