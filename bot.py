@@ -433,6 +433,61 @@ async def balance(interaction: discord.Interaction):
         await interaction.followup.send(f"⚠️ Error: {e}", ephemeral=True)
 
 
+@bot.tree.command(name="last_pack", description="Show your most recent pack (no cost)")
+async def last_pack(interaction: discord.Interaction):
+    # respect your channel guard (forum posts/threads allowed)
+    if not await ensure_channel(interaction):
+        return
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    # adjust if your packs have a different size
+    PACK_SIZE = 5
+
+    def _txt(x):
+        return (str(x) if x is not None else "")
+
+    try:
+        # Ask the API for the newest items and take the latest pack-sized slice
+        res = await call_sheet("collection", {
+            "user_id": str(interaction.user.id),
+            "page": 1,
+            "page_size": PACK_SIZE,
+            "unique_only": False,
+            "rarity": "ALL",
+            "position": "ALL",
+            "batch": "ALL",
+        })
+
+        items = (res or {}).get("items") or []
+        if not items:
+            await interaction.followup.send("No recent cards found.", ephemeral=True)
+            return
+
+        pulled = items[:PACK_SIZE]
+        lines = []
+        for i, it in enumerate(pulled, 1):
+            name = it.get("name") or it.get("player") or it.get("printcode") or it.get("card_id") or "Unknown"
+            rarity = it.get("rarity") or "—"
+            club = it.get("club") or it.get("Club") or ""
+            pos = it.get("position") or ""
+            serial = f" #{it['serial']}" if it.get("serial") else ""
+            bits = [rarity, club, pos]
+            bits = [b for b in bits if b]
+            lines.append(f"{i}. **{_txt(name)}** · {' • '.join(bits)}{serial}")
+
+        emb = discord.Embed(
+            title="Your most recent pack",
+            description="\n".join(lines),
+            color=discord.Color.gold(),
+        )
+        await interaction.followup.send(embed=emb, ephemeral=True)
+
+    except Exception as e:
+        await interaction.followup.send(f"⚠️ Error: {e}", ephemeral=True)
+
+
+
 @bot.tree.command(description="Sell one duplicate of a specific card_id (keeps your first copy).")
 @app_commands.describe(card_id="Exact card_id from the card list (e.g., PLR123)")
 async def sell(interaction: discord.Interaction, card_id: str):
@@ -517,16 +572,57 @@ async def start_reveal_session(interaction: discord.Interaction, res: dict, pack
 
 
 
-@bot.tree.command(description="Open the Base Pack (price set in your Sheet). Reveals worst → best (last).")
-async def open(interaction: discord.Interaction):
+@bot.tree.command(name="open", description="Open a pack")
+async def open_pack(interaction: discord.Interaction):
     if not await ensure_channel(interaction):
-        return await interaction.response.send_message(f"Use this in <#{COMMAND_CHANNEL_ID}>.", ephemeral=True)
-    await interaction.response.defer()
+        return
+
+    # Always acknowledge fast so Discord doesn't show "didn't respond"
+    await interaction.response.defer(thinking=True)
+
+    user_id = str(interaction.user.id)
+    PACK_SIZE = 5  # adjust to your game
+
     try:
-        res = await call_sheet("open_base", {"user_id": str(interaction.user.id)})
-        await start_reveal_session(interaction, res, res.get("pack_name", "Base Pack"))
+        # your existing payload, plus any args you use (pack id, etc.)
+        data = await call_sheet("open", {"user_id": user_id})
+        pulls = data.get("pulls") or data.get("cards") or data.get("items") or []
+        if not pulls:
+            raise RuntimeError("No pulls returned")
+        await start_reveal_session(interaction, pulls, pack_name=data.get("pack_name","Pack"))
+        return
+
     except Exception as e:
-        await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        # Worker timed out but Apps Script likely finished (cards already minted)
+        msg = str(e)
+        if "upstream_timeout" in msg or "API 502" in msg or "Bad Gateway" in msg:
+            await interaction.followup.send(
+                "⏱️ The API took too long, but your pack likely opened. Recovering it now…",
+                ephemeral=True
+            )
+            # Fallback: read the newest cards from collection and reveal those
+            try:
+                col = await call_sheet("collection", {
+                    "user_id": user_id,
+                    "page": 1,
+                    "page_size": PACK_SIZE,
+                    "unique_only": False,
+                    "rarity": "ALL",
+                    "position": "ALL",
+                    "batch": "ALL",
+                })
+                items = (col or {}).get("items", [])[:PACK_SIZE]
+                if not items:
+                    raise RuntimeError("No recent cards to recover.")
+                await start_reveal_session(interaction, items, pack_name="Recovered Pack")
+                return
+            except Exception as e2:
+                await interaction.followup.send(f"⚠️ Pack opened but I couldn't recover the reveal. Try `/last_pack` to view it.\nDetails: {e2}", ephemeral=True)
+                return
+
+        # Other errors: surface them
+        await interaction.followup.send(f"⚠️ Error opening pack: {e}", ephemeral=True)
+
 
 
 
