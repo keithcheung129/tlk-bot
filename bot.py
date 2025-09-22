@@ -53,6 +53,30 @@ bot.http_session = None
 
 
 
+# ---- Pack registry (read from env so you can add packs later without code changes)
+def _load_pack_actions():
+    raw = os.getenv("PACK_ACTIONS", "").strip()
+    try:
+        m = json.loads(raw) if raw else {}
+        if isinstance(m, dict) and m:
+            # normalize to { DisplayName: action_name }
+            return {str(k): str(v) for k, v in m.items()}
+    except Exception:
+        pass
+    # sensible defaults
+    default = os.getenv("OPEN_ACTION") or "open_base"  # your current Base pack
+    return {"Base": default}
+
+PACK_ACTIONS = _load_pack_actions()
+PACK_NAMES   = list(PACK_ACTIONS.keys())
+print("PACK_ACTIONS =", PACK_ACTIONS)  # shows in Railway logs on boot
+
+# Autocomplete for /open pack=
+from discord import app_commands
+async def _pack_autocomplete(_itx: discord.Interaction, current: str):
+    q = (current or "").lower()
+    out = [name for name in PACK_NAMES if q in name.lower()]
+    return [app_commands.Choice(name=n, value=n) for n in out[:25]]
 
 
 
@@ -555,25 +579,27 @@ async def start_reveal_session(interaction: discord.Interaction, res: dict, pack
     msg = await interaction.channel.send(embed=embed_back, view=view)
 
 
-
-
-
-OPEN_ACTION = os.getenv("OPEN_ACTION", "open_base")  # set to "open_base" in Railway if needed
-
 @bot.tree.command(name="open", description="Open a pack")
-async def open_pack(interaction: discord.Interaction):
+@app_commands.describe(pack="Which pack to open")
+@app_commands.autocomplete(pack=_pack_autocomplete)
+async def open_pack(interaction: discord.Interaction, pack: str = "Base"):
     if not await ensure_channel(interaction):
         return
 
-    await interaction.response.defer(thinking=True)  # reply fast so Discord doesn't time out
+    await interaction.response.defer(thinking=True)
+
     user_id   = str(interaction.user.id)
-    PACK_SIZE = 5  
+    PACK_SIZE = 5   # adjust if your packs are a different size
     started   = int(time.time() * 1000)
 
+    # resolve the Apps Script action for this pack (e.g., "open_base")
+    action = PACK_ACTIONS.get(pack)
+    if not action:
+        # derive: "My New Pack" -> "open_my_new_pack"
+        action = "open_" + pack.lower().replace(" ", "_")
+
     def _extract(res):
-        """Unwrap {ok,data}, surface Apps Script errors, and return (pulls, body)."""
         body = res.get("data", res) if isinstance(res, dict) else res
-        # If Apps Script returned {error:"..."} with HTTP 200, show it and stop.
         if isinstance(body, dict) and body.get("error"):
             raise RuntimeError(str(body["error"]))
         pulls = []
@@ -581,63 +607,52 @@ async def open_pack(interaction: discord.Interaction):
             pulls = body.get("pulls") or body.get("cards") or body.get("items") or []
         return pulls, (body if isinstance(body, dict) else {})
 
-    async def _do_open():
-        # Try the primary action, then an optional fallback if you ever renamed it.
-        try:
-            return await call_sheet(OPEN_ACTION, {"user_id": user_id})
-        except Exception as e:
-            if "unknown action" in str(e).lower() and OPEN_ACTION != "open_base":
-                return await call_sheet("open_base", {"user_id": user_id})
-            raise
-
     async def _recover_from_collection():
-        # If the API timed out or returned no list, check for new cards since we started
         col = await call_sheet("collection", {
             "user_id": user_id,
             "page": 1,
-            "page_size": PACK_SIZE * 2,   # grab a few extra just in case
+            "page_size": PACK_SIZE * 2,
             "unique_only": False,
-            "rarity": "ALL",
-            "position": "ALL",
-            "batch": "ALL",
+            "rarity": "ALL", "position": "ALL", "batch": "ALL",
         })
         items = (col or {}).get("items") or []
         def ts(it):
             try: return int(it.get("acquired_ts") or it.get("ts") or 0)
             except: return 0
-        recent = [it for it in items if ts(it) >= started - 120000]  # 2-min window
+        recent = [it for it in items if ts(it) >= started - 120000]
         return recent[:PACK_SIZE]
 
     try:
-        res = await _do_open()
+        res = await call_sheet(action, {"user_id": user_id})
         pulls, body = _extract(res)
-
-        if pulls:  # normal happy path (like before)
-            pack_name = body.get("pack_name") or "Pack"
+        if pulls:
+            pack_name = body.get("pack_name") or pack
             await start_reveal_session(interaction, pulls, pack_name=pack_name, god=None, best=None)
             return
 
-        # No list came back → check if anything actually minted; if not, tell the user cleanly.
+        # nothing returned → see if anything minted; if not, tell user cleanly
         recovered = await _recover_from_collection()
         if recovered:
-            await start_reveal_session(interaction, recovered, pack_name="Recovered Pack", god=None, best=None)
+            await start_reveal_session(interaction, recovered, pack_name=f"Recovered {pack}", god=None, best=None)
         else:
             await interaction.followup.send("⚠️ Pack did not open (no new cards). Please try again.", ephemeral=True)
 
     except Exception as e:
         msg = str(e)
-        # Slow Apps Script / Worker timeout? try recovery instead of failing.
+        # timeouts or gateway issues → try recovery then surface error
         if any(x in msg.lower() for x in ("upstream_timeout", "502", "bad gateway", "timeout")):
             try:
                 recovered = await _recover_from_collection()
                 if recovered:
-                    await start_reveal_session(interaction, recovered, pack_name="Recovered Pack", god=None, best=None)
+                    await start_reveal_session(interaction, recovered, pack_name=f"Recovered {pack}", god=None, best=None)
                     return
             except Exception as e2:
                 msg += f" | recovery: {e2}"
-        # Otherwise surface the real Apps Script message (e.g., Not enough tickets / starter claimed)
+        # unknown action? point user/admin at available packs
+        if "unknown action" in msg.lower():
+            opts = ", ".join(PACK_NAMES) or "Base"
+            msg += f" (available packs: {opts})"
         await interaction.followup.send(f"⚠️ Error opening pack: {msg}", ephemeral=True)
-
 
 
 
