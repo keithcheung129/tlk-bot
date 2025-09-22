@@ -580,6 +580,7 @@ async def start_reveal_session(interaction: discord.Interaction, res: dict, pack
 
 
 @bot.tree.command(name="open", description="Open a pack")
+@app_commands.guilds(discord.Object(id=int(os.getenv("GUILD_ID", "0"))))
 @app_commands.describe(pack="Which pack to open")
 @app_commands.autocomplete(pack=_pack_autocomplete)
 async def open_pack(interaction: discord.Interaction, pack: str = "Base"):
