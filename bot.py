@@ -156,20 +156,19 @@ class RevealState(discord.ui.View):
         await itx.followup.send(embed=emb)
 
         try:
-            if HYPE_CHANNEL_ID and (self.god or any(x.get("rarity") == "SSR" for x in self.pulls_sorted)):
+            if HYPE_CHANNEL_ID and (self.god or any(x.get("rarity") == in ("SR", "SSR") for x in self.pulls_sorted)):
                 chan = bot.get_channel(HYPE_CHANNEL_ID)
                 if chan:
-                    hype = discord.Embed(
-                        title="HUGE PULL!",
-                        description=(
-                            f"{itx.user.mention} just opened **{self.pack_name}** and hit "
-                            + ("a **GOD PACK**!" if self.god else "an **SSR**!")
-                        ),
-                        color=0xFFD166,
-                    )
-                    if self.best and self.best.get("image_ref"):
-                        hype.set_image(url=self.best["image_ref"])
-                    await chan.send(embed=hype)
+                    user = itx.user.mention
+                    big = [x for x in self.pulls_sorted if x.get("rarity") in ("SR","SSR")]
+                    if self.god:
+                        await chan.send(f"{user} just pulled a **GOD PACK**!! 🎉🔥")
+                    elif big:
+                        # choose the best card to show in hype message
+                        top = big[-1]
+                        await chan.send(
+                            f"{user} just pulled out a {top.get('rarity')} **{top.get('name')}**!!! Congrats!"
+                        )
         except Exception:
             pass
 
@@ -247,8 +246,7 @@ class RevealState(discord.ui.View):
         )
         if img:
             reveal_embed.set_image(url=img)
-        await itx.message.edit(embed=reveal_embed, view=self)
-        await self._maybe_hype(itx, card)  
+        await itx.message.edit(embed=reveal_embed, view=self) 
         if self.queue:
             return
         self.done = True
