@@ -156,7 +156,7 @@ class RevealState(discord.ui.View):
         await itx.followup.send(embed=emb)
 
         try:
-            if HYPE_CHANNEL_ID and (self.god or any(x.get("rarity") == in ("SR", "SSR") for x in self.pulls_sorted)):
+            if HYPE_CHANNEL_ID and (self.god or any(x.get("rarity") in ("SR", "SSR") for x in self.pulls_sorted)):
                 chan = bot.get_channel(HYPE_CHANNEL_ID)
                 if chan:
                     user = itx.user.mention
