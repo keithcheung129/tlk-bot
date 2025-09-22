@@ -433,22 +433,16 @@ async def balance(interaction: discord.Interaction):
         await interaction.followup.send(f"⚠️ Error: {e}", ephemeral=True)
 
 
+
 @bot.tree.command(name="last_pack", description="Show your most recent pack (no cost)")
+@app_commands.guilds(discord.Object(id=int(os.getenv("GUILD_ID", "0"))))
 async def last_pack(interaction: discord.Interaction):
-    # respect your channel guard (forum posts/threads allowed)
     if not await ensure_channel(interaction):
         return
-
     await interaction.response.defer(ephemeral=True, thinking=True)
 
-    # adjust if your packs have a different size
     PACK_SIZE = 5
-
-    def _txt(x):
-        return (str(x) if x is not None else "")
-
     try:
-        # Ask the API for the newest items and take the latest pack-sized slice
         res = await call_sheet("collection", {
             "user_id": str(interaction.user.id),
             "page": 1,
@@ -458,13 +452,12 @@ async def last_pack(interaction: discord.Interaction):
             "position": "ALL",
             "batch": "ALL",
         })
-
         items = (res or {}).get("items") or []
-        if not items:
+        pulled = items[:PACK_SIZE]
+        if not pulled:
             await interaction.followup.send("No recent cards found.", ephemeral=True)
             return
 
-        pulled = items[:PACK_SIZE]
         lines = []
         for i, it in enumerate(pulled, 1):
             name = it.get("name") or it.get("player") or it.get("printcode") or it.get("card_id") or "Unknown"
@@ -474,17 +467,16 @@ async def last_pack(interaction: discord.Interaction):
             serial = f" #{it['serial']}" if it.get("serial") else ""
             bits = [rarity, club, pos]
             bits = [b for b in bits if b]
-            lines.append(f"{i}. **{_txt(name)}** · {' • '.join(bits)}{serial}")
+            lines.append(f"{i}. **{name}** · {' • '.join(bits)}{serial}")
 
-        emb = discord.Embed(
-            title="Your most recent pack",
-            description="\n".join(lines),
-            color=discord.Color.gold(),
-        )
+        emb = discord.Embed(title="Your most recent pack",
+                            description="\n".join(lines),
+                            color=discord.Color.gold())
         await interaction.followup.send(embed=emb, ephemeral=True)
-
     except Exception as e:
         await interaction.followup.send(f"⚠️ Error: {e}", ephemeral=True)
+
+
 
 
 
@@ -739,6 +731,20 @@ async def collection(
 async def whoami(interaction: discord.Interaction):
     if not await ensure_channel(interaction): return
     await interaction.response.send_message(f"Your ID: `{interaction.user.id}`", ephemeral=True)
+
+
+@bot.tree.command(name="resync", description="Admin: resync app commands")
+@app_commands.guilds(discord.Object(id=int(os.getenv("GUILD_ID","0"))))
+async def resync(interaction: discord.Interaction):
+    if str(interaction.user.id) != os.getenv("ADMIN_USER_ID", ""):
+        return await interaction.response.send_message("Nope.", ephemeral=True)
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    gid = int(os.getenv("GUILD_ID","0"))
+    guild = discord.Object(id=gid) if gid else None
+    synced = await bot.tree.sync(guild=guild) if guild else await bot.tree.sync()
+    await interaction.followup.send(f"Synced: {', '.join(c.name for c in synced)}", ephemeral=True)
+
+
 
 
 @bot.tree.error
