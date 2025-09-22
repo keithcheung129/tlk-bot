@@ -63,7 +63,7 @@ def _load_pack_actions():
     except Exception:
         pass
     # Default + alias for today
-    return {"Base Pack": "open_base", "Base": "open_base"}
+    return {"Base Pack": "open_base"}
 
 PACK_ACTIONS = _load_pack_actions()
 PACK_NAMES   = list(PACK_ACTIONS.keys())
@@ -661,7 +661,7 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
         # nothing returned → see if anything minted; if not, tell user
         recovered = await _recover_from_collection()
         if recovered:
-            await start_reveal_session(interaction, recovered, pack_name=f"Recovered {pack}", god=None, best=None)
+            await start_reveal_session(interaction, cards, pack_name=pack_name)
         else:
             await interaction.followup.send("⚠️ Pack did not open (no new cards). Please try again.", ephemeral=True)
 
@@ -671,7 +671,7 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
             try:
                 recovered = await _recover_from_collection()
                 if recovered:
-                    await start_reveal_session(interaction, recovered, pack_name=f"Recovered {pack}", god=None, best=None)
+                    await start_reveal_session(interaction, recovered, pack_name=f"Recovered {pack}")
                     return
             except Exception as e2:
                 msg += f" | recovery: {e2}"
