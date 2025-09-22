@@ -53,23 +53,28 @@ bot.http_session = None
 
 
 
-# ---- Pack registry (read from env so you can add packs later without code changes)
+# ---- Packs (read from env later if you add more)
 def _load_pack_actions():
     raw = os.getenv("PACK_ACTIONS", "").strip()
     try:
         m = json.loads(raw) if raw else {}
         if isinstance(m, dict) and m:
-            # normalize to { DisplayName: action_name }
             return {str(k): str(v) for k, v in m.items()}
     except Exception:
         pass
-    # sensible defaults
-    default = os.getenv("OPEN_ACTION") or "open_base"  # your current Base pack
-    return {"Base": default}
+    # Default + alias for today
+    return {"Base Pack": "open_base", "Base": "open_base"}
 
 PACK_ACTIONS = _load_pack_actions()
 PACK_NAMES   = list(PACK_ACTIONS.keys())
-print("PACK_ACTIONS =", PACK_ACTIONS)  # shows in Railway logs on boot
+print("PACK_ACTIONS =", PACK_ACTIONS)
+
+from discord import app_commands
+async def _pack_autocomplete(_itx: discord.Interaction, current: str):
+    q = (current or "").lower()
+    return [app_commands.Choice(name=n, value=n)
+            for n in PACK_NAMES if q in n.lower()][:25]
+
 
 # Autocomplete for /open pack=
 from discord import app_commands
@@ -579,34 +584,43 @@ async def start_reveal_session(interaction: discord.Interaction, res: dict, pack
     msg = await interaction.channel.send(embed=embed_back, view=view)
 
 
+
+# ----------/open pack command ----------
 @bot.tree.command(name="open", description="Open a pack")
 @app_commands.guilds(discord.Object(id=int(os.getenv("GUILD_ID", "0"))))
 @app_commands.describe(pack="Which pack to open")
 @app_commands.autocomplete(pack=_pack_autocomplete)
-async def open_pack(interaction: discord.Interaction, pack: str = "Base"):
+async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
     if not await ensure_channel(interaction):
         return
-
     await interaction.response.defer(thinking=True)
 
     user_id   = str(interaction.user.id)
-    PACK_SIZE = 5   # adjust if your packs are a different size
-    started   = int(time.time() * 1000)
+    PACK_SIZE = 5
+    started_ms = int(time.time() * 1000)
 
-    # resolve the Apps Script action for this pack (e.g., "open_base")
-    action = PACK_ACTIONS.get(pack)
-    if not action:
-        # derive: "My New Pack" -> "open_my_new_pack"
-        action = "open_" + pack.lower().replace(" ", "_")
+    # resolve Apps Script action (e.g., "open_base")
+    action = PACK_ACTIONS.get(pack) or "open_base"
+
+    def _normalize_card(x: dict):
+        return {
+            "card_id":   x.get("card_id"),
+            "name":      x.get("name") or x.get("player") or x.get("printcode") or "Unknown",
+            "rarity":    x.get("rarity"),
+            "serial":    x.get("serial") or x.get("serial_no"),
+            "image_url": x.get("image_url") or x.get("image_ref"),
+        }
 
     def _extract(res):
+        """Unwrap {ok,data}, surface {error}, return (normalized_cards, body)."""
         body = res.get("data", res) if isinstance(res, dict) else res
         if isinstance(body, dict) and body.get("error"):
             raise RuntimeError(str(body["error"]))
-        pulls = []
+        raw = []
         if isinstance(body, dict):
-            pulls = body.get("pulls") or body.get("cards") or body.get("items") or []
-        return pulls, (body if isinstance(body, dict) else {})
+            # Your API uses "results"
+            raw = body.get("results") or body.get("pulls") or body.get("cards") or body.get("items") or []
+        return list(map(_normalize_card, raw)), (body if isinstance(body, dict) else {})
 
     async def _recover_from_collection():
         col = await call_sheet("collection", {
@@ -617,21 +631,28 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base"):
             "rarity": "ALL", "position": "ALL", "batch": "ALL",
         })
         items = (col or {}).get("items") or []
+        # normalize + prefer very recent
         def ts(it):
             try: return int(it.get("acquired_ts") or it.get("ts") or 0)
             except: return 0
-        recent = [it for it in items if ts(it) >= started - 120000]
-        return recent[:PACK_SIZE]
+        recent = [it for it in items if ts(it) >= started_ms - 120000]
+        pool = recent[:PACK_SIZE] or items[:PACK_SIZE]
+        return [ _normalize_card(it) for it in pool ]
 
     try:
         res = await call_sheet(action, {"user_id": user_id})
-        pulls, body = _extract(res)
-        if pulls:
+        cards, body = _extract(res)
+
+        if cards:
             pack_name = body.get("pack_name") or pack
-            await start_reveal_session(interaction, pulls, pack_name=pack_name, god=None, best=None)
+            await start_reveal_session(
+                interaction, cards,
+                pack_name=pack_name,
+                god=body.get("godPack"), best=None
+            )
             return
 
-        # nothing returned → see if anything minted; if not, tell user cleanly
+        # nothing returned → see if anything minted; if not, tell user
         recovered = await _recover_from_collection()
         if recovered:
             await start_reveal_session(interaction, recovered, pack_name=f"Recovered {pack}", god=None, best=None)
@@ -640,7 +661,6 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base"):
 
     except Exception as e:
         msg = str(e)
-        # timeouts or gateway issues → try recovery then surface error
         if any(x in msg.lower() for x in ("upstream_timeout", "502", "bad gateway", "timeout")):
             try:
                 recovered = await _recover_from_collection()
@@ -649,11 +669,8 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base"):
                     return
             except Exception as e2:
                 msg += f" | recovery: {e2}"
-        # unknown action? point user/admin at available packs
-        if "unknown action" in msg.lower():
-            opts = ", ".join(PACK_NAMES) or "Base"
-            msg += f" (available packs: {opts})"
         await interaction.followup.send(f"⚠️ Error opening pack: {msg}", ephemeral=True)
+
 
 
 
