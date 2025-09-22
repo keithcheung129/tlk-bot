@@ -174,43 +174,43 @@ class RevealState(discord.ui.View):
             pass
 
         async def _maybe_hype(self, itx: discord.Interaction, card: dict):
-        """Post a hype message to HYPE_CHANNEL_ID for SR/SSR or God Pack (once)."""
-        # Channel configured?
-        if not HYPE_CHANNEL_ID:
-            return
-        chan = bot.get_channel(HYPE_CHANNEL_ID)
-        if not chan:
-            return
+            """Post a hype message to HYPE_CHANNEL_ID for SR/SSR or God Pack (once)."""
+            # Channel configured?
+            if not HYPE_CHANNEL_ID:
+                return
+            chan = bot.get_channel(HYPE_CHANNEL_ID)
+            if not chan:
+                return
 
-        # God Pack? (announce once per session)
-        try:
-            if self.god and not getattr(self, "_hyped_god", False):
-                self._hyped_god = True
-                await chan.send(
-                    f"💥 {itx.user.mention} just opened a **GOD PACK** in **{self.pack_name}**!!!"
-                )
-                # don't return; still allow individual SR/SSR hype too if you want
-        except Exception:
-            pass
+            # God Pack? (announce once per session)
+            try:
+                if self.god and not getattr(self, "_hyped_god", False):
+                    self._hyped_god = True
+                    await chan.send(
+                        f"💥 {itx.user.mention} just opened a **GOD PACK** in **{self.pack_name}**!!!"
+                    )
+                    # don't return; still allow individual SR/SSR hype too if you want
+            except Exception:
+                pass
 
-        # Card-based hype (SR or above)
-        rarity = (card.get("rarity") or "").upper()
-        if rarity not in ("SR", "SSR"):
-            return
+            # Card-based hype (SR or above)
+            rarity = (card.get("rarity") or "").upper()
+            if rarity not in ("SR", "SSR"):
+                return
 
-        name = card.get("name") or "Unknown"
-        try:
-            msg = f"{itx.user.mention} just pulled out a **{rarity} {name}**!!! Congrats!"
-            img = card.get("image_ref")
-            if img:
-                emb = discord.Embed(color=0xFFD166 if rarity == "SSR" else 0xFFA654)
-                emb.set_image(url=img)
-                await chan.send(msg, embed=emb)
-            else:
-                await chan.send(msg)
-        except Exception:
-            # Never let hype failures break the reveal flow.
-            pass
+            name = card.get("name") or "Unknown"
+            try:
+                msg = f"{itx.user.mention} just pulled out a **{rarity} {name}**!!! Congrats!"
+                img = card.get("image_ref")
+                if img:
+                    emb = discord.Embed(color=0xFFD166 if rarity == "SSR" else 0xFFA654)
+                    emb.set_image(url=img)
+                    await chan.send(msg, embed=emb)
+                else:
+                    await chan.send(msg)
+            except Exception:
+                # Never let hype failures break the reveal flow.
+                pass
 
     
     
