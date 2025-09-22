@@ -24,7 +24,7 @@ from discord.ext import commands
 
 GUILD_ID = 740430544273145876  # <-- replace with your server ID
 
-
+GID = int(os.getenv("GUILD_ID", "0"))
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
@@ -129,16 +129,19 @@ async def call_sheet(action: str, payload: dict):
 async def on_ready():
     gid = int(os.getenv("GUILD_ID", "0"))
     try:
+        # 1) Ensure guild commands are up to date (instant)
         if gid:
-            guild = discord.Object(id=gid)
-            synced = await bot.tree.sync(guild=guild)
-            print(f"✅ Synced {[c.name for c in synced]} to guild {gid}")
-        else:
-            synced = await bot.tree.sync()
-            print(f"✅ Synced globally: {[c.name for c in synced]}")
+            synced_g = await bot.tree.sync(guild=discord.Object(id=gid))
+            print("✅ Guild sync:", [c.name for c in synced_g], "to", gid)
+
+        # 2) Clear any old global commands by syncing an empty global set
+        synced_glob = await bot.tree.sync()
+        print("✅ Global sync (should be empty):", [c.name for c in synced_glob])
+
     except Exception as e:
         print("❌ Command sync error:", e)
     print(f"Logged in as {bot.user} ({bot.user.id})")
+
 
 
 
@@ -426,6 +429,7 @@ class RevealState(discord.ui.View):
 
 # --------- Commands ---------
 @bot.tree.command(name="balance", description="Show your Tickets and Tokens")
+@app_commands.guilds(discord.Object(id=GID))
 async def balance(interaction: discord.Interaction):
     if not await ensure_channel(interaction):
         return
@@ -464,7 +468,7 @@ async def balance(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="last_pack", description="Show your most recent pack (no cost)")
-@app_commands.guilds(discord.Object(id=int(os.getenv("GUILD_ID", "0"))))
+@app_commands.guilds(discord.Object(id=GID))
 async def last_pack(interaction: discord.Interaction):
     if not await ensure_channel(interaction):
         return
@@ -510,6 +514,7 @@ async def last_pack(interaction: discord.Interaction):
 
 
 @bot.tree.command(description="Sell one duplicate of a specific card_id (keeps your first copy).")
+@app_commands.guilds(discord.Object(id=GID))
 @app_commands.describe(card_id="Exact card_id from the card list (e.g., PLR123)")
 async def sell(interaction: discord.Interaction, card_id: str):
     if not await ensure_channel(interaction):
@@ -529,6 +534,7 @@ async def sell(interaction: discord.Interaction, card_id: str):
         await interaction.followup.send(f"Error: {e}", ephemeral=True)
 
 @bot.tree.command(description="Sell all duplicates (keeps 1 of each).")
+@app_commands.guilds(discord.Object(id=GID))
 async def sell_all_dupes(interaction: discord.Interaction):
     if not await ensure_channel(interaction):
         return await interaction.response.send_message(f"Use this in <#{COMMAND_CHANNEL_ID}>.", ephemeral=True)
@@ -587,7 +593,7 @@ async def start_reveal_session(interaction: discord.Interaction, res: dict, pack
 
 # ----------/open pack command ----------
 @bot.tree.command(name="open", description="Open a pack")
-@app_commands.guilds(discord.Object(id=int(os.getenv("GUILD_ID", "0"))))
+@app_commands.guilds(discord.Object(id=GID))
 @app_commands.describe(pack="Which pack to open")
 @app_commands.autocomplete(pack=_pack_autocomplete)
 async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
@@ -678,6 +684,7 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
 
 
 @bot.tree.command(description="Claim your one-time Starter Pack and reveal it (worst → best).")
+@app_commands.guilds(discord.Object(id=GID))
 async def starter(interaction: discord.Interaction):
     if not await ensure_channel(interaction):
         return await interaction.response.send_message(f"Use this in <#{COMMAND_CHANNEL_ID}>.", ephemeral=True)
@@ -697,6 +704,7 @@ async def starter(interaction: discord.Interaction):
 
 
 @bot.tree.command(description="Admin: grant tickets to a user.")
+@app_commands.guilds(discord.Object(id=GID))
 @app_commands.describe(user="Target user", amount="Number of tickets", reason="Reason for the grant")
 async def grant(interaction: discord.Interaction, user: discord.User, amount: int, reason: str = "admin grant"):
     if not await ensure_channel(interaction): return
@@ -717,6 +725,7 @@ POSITION_CHOICES = [app_commands.Choice(name=x, value=x) for x in
 BATCH_CHOICES = [app_commands.Choice(name=x, value=x) for x in ["ALL","Base","Base U"]]
 
 @bot.tree.command(description="View your collection as an image gallery (10 per page).")
+@app_commands.guilds(discord.Object(id=GID))
 @app_commands.describe(page="Page number (starts at 1)")
 @app_commands.choices(rarity=RARITY_CHOICES, position=POSITION_CHOICES, batch=BATCH_CHOICES)
 async def collection(
@@ -785,13 +794,14 @@ async def collection(
 
 
 @bot.tree.command(description="Show your Discord user ID.")
+@app_commands.guilds(discord.Object(id=GID))
 async def whoami(interaction: discord.Interaction):
     if not await ensure_channel(interaction): return
     await interaction.response.send_message(f"Your ID: `{interaction.user.id}`", ephemeral=True)
 
 
 @bot.tree.command(name="resync", description="Admin: resync app commands")
-@app_commands.guilds(discord.Object(id=int(os.getenv("GUILD_ID","0"))))
+@app_commands.guilds(discord.Object(id=GID))
 async def resync(interaction: discord.Interaction):
     if str(interaction.user.id) != os.getenv("ADMIN_USER_ID", ""):
         return await interaction.response.send_message("Nope.", ephemeral=True)
