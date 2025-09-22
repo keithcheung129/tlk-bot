@@ -558,62 +558,86 @@ async def start_reveal_session(interaction: discord.Interaction, res: dict, pack
 
 
 
-
-
-
-
-
+OPEN_ACTION = os.getenv("OPEN_ACTION", "open_base")  # set to "open_base" in Railway if needed
 
 @bot.tree.command(name="open", description="Open a pack")
 async def open_pack(interaction: discord.Interaction):
     if not await ensure_channel(interaction):
         return
 
-    # Always acknowledge fast so Discord doesn't show "didn't respond"
-    await interaction.response.defer(thinking=True)
+    await interaction.response.defer(thinking=True)  # reply fast so Discord doesn't time out
+    user_id   = str(interaction.user.id)
+    PACK_SIZE = 5  
+    started   = int(time.time() * 1000)
 
-    user_id = str(interaction.user.id)
-    PACK_SIZE = 5  # adjust to your game
+    def _extract(res):
+        """Unwrap {ok,data}, surface Apps Script errors, and return (pulls, body)."""
+        body = res.get("data", res) if isinstance(res, dict) else res
+        # If Apps Script returned {error:"..."} with HTTP 200, show it and stop.
+        if isinstance(body, dict) and body.get("error"):
+            raise RuntimeError(str(body["error"]))
+        pulls = []
+        if isinstance(body, dict):
+            pulls = body.get("pulls") or body.get("cards") or body.get("items") or []
+        return pulls, (body if isinstance(body, dict) else {})
+
+    async def _do_open():
+        # Try the primary action, then an optional fallback if you ever renamed it.
+        try:
+            return await call_sheet(OPEN_ACTION, {"user_id": user_id})
+        except Exception as e:
+            if "unknown action" in str(e).lower() and OPEN_ACTION != "open_base":
+                return await call_sheet("open_base", {"user_id": user_id})
+            raise
+
+    async def _recover_from_collection():
+        # If the API timed out or returned no list, check for new cards since we started
+        col = await call_sheet("collection", {
+            "user_id": user_id,
+            "page": 1,
+            "page_size": PACK_SIZE * 2,   # grab a few extra just in case
+            "unique_only": False,
+            "rarity": "ALL",
+            "position": "ALL",
+            "batch": "ALL",
+        })
+        items = (col or {}).get("items") or []
+        def ts(it):
+            try: return int(it.get("acquired_ts") or it.get("ts") or 0)
+            except: return 0
+        recent = [it for it in items if ts(it) >= started - 120000]  # 2-min window
+        return recent[:PACK_SIZE]
 
     try:
-        # your existing payload, plus any args you use (pack id, etc.)
-        data = await call_sheet("open", {"user_id": user_id})
-        pulls = data.get("pulls") or data.get("cards") or data.get("items") or []
-        if not pulls:
-            raise RuntimeError("No pulls returned")
-        await start_reveal_session(interaction, pulls, pack_name=data.get("pack_name","Pack"))
-        return
+        res = await _do_open()
+        pulls, body = _extract(res)
+
+        if pulls:  # normal happy path (like before)
+            pack_name = body.get("pack_name") or "Pack"
+            await start_reveal_session(interaction, pulls, pack_name=pack_name, god=None, best=None)
+            return
+
+        # No list came back → check if anything actually minted; if not, tell the user cleanly.
+        recovered = await _recover_from_collection()
+        if recovered:
+            await start_reveal_session(interaction, recovered, pack_name="Recovered Pack", god=None, best=None)
+        else:
+            await interaction.followup.send("⚠️ Pack did not open (no new cards). Please try again.", ephemeral=True)
 
     except Exception as e:
-        # Worker timed out but Apps Script likely finished (cards already minted)
         msg = str(e)
-        if "upstream_timeout" in msg or "API 502" in msg or "Bad Gateway" in msg:
-            await interaction.followup.send(
-                "⏱️ The API took too long, but your pack likely opened. Recovering it now…",
-                ephemeral=True
-            )
-            # Fallback: read the newest cards from collection and reveal those
+        # Slow Apps Script / Worker timeout? try recovery instead of failing.
+        if any(x in msg.lower() for x in ("upstream_timeout", "502", "bad gateway", "timeout")):
             try:
-                col = await call_sheet("collection", {
-                    "user_id": user_id,
-                    "page": 1,
-                    "page_size": PACK_SIZE,
-                    "unique_only": False,
-                    "rarity": "ALL",
-                    "position": "ALL",
-                    "batch": "ALL",
-                })
-                items = (col or {}).get("items", [])[:PACK_SIZE]
-                if not items:
-                    raise RuntimeError("No recent cards to recover.")
-                await start_reveal_session(interaction, items, pack_name="Recovered Pack")
-                return
+                recovered = await _recover_from_collection()
+                if recovered:
+                    await start_reveal_session(interaction, recovered, pack_name="Recovered Pack", god=None, best=None)
+                    return
             except Exception as e2:
-                await interaction.followup.send(f"⚠️ Pack opened but I couldn't recover the reveal. Try `/last_pack` to view it.\nDetails: {e2}", ephemeral=True)
-                return
+                msg += f" | recovery: {e2}"
+        # Otherwise surface the real Apps Script message (e.g., Not enough tickets / starter claimed)
+        await interaction.followup.send(f"⚠️ Error opening pack: {msg}", ephemeral=True)
 
-        # Other errors: surface them
-        await interaction.followup.send(f"⚠️ Error opening pack: {e}", ephemeral=True)
 
 
 
