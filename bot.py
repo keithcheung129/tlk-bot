@@ -468,10 +468,10 @@ async def balance(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="last_pack", description="Show your most recent pack (no cost)")
-@app_commands.guilds(discord.Object(id=GID))
 async def last_pack(interaction: discord.Interaction):
     if not await ensure_channel(interaction):
         return
+
     await interaction.response.defer(ephemeral=True, thinking=True)
 
     PACK_SIZE = 5
@@ -479,35 +479,66 @@ async def last_pack(interaction: discord.Interaction):
         res = await call_sheet("collection", {
             "user_id": str(interaction.user.id),
             "page": 1,
-            "page_size": PACK_SIZE,
+            "page_size": 50,        # grab enough to detect the last pack group
             "unique_only": False,
             "rarity": "ALL",
             "position": "ALL",
             "batch": "ALL",
         })
         items = (res or {}).get("items") or []
-        pulled = items[:PACK_SIZE]
-        if not pulled:
+        if not items:
             await interaction.followup.send("No recent cards found.", ephemeral=True)
             return
 
+        # Helpers
+        def ts(x):
+            v = x.get("acquired_ts") or x.get("ts") or 0
+            try: return int(v)
+            except: return 0
+
+        # 1) Prefer grouping by draw_id
+        key = "draw_id" if any("draw_id" in i for i in items) else None
+        # 2) else by commit hash
+        if not key and any("commit" in i for i in items):
+            key = "commit"
+
+        pulled = None
+        if key:
+            # group by key and pick the group with the latest timestamp
+            groups = {}
+            for it in items:
+                k = it.get(key)
+                if not k: continue
+                groups.setdefault(k, []).append(it)
+            if groups:
+                last_key = max(groups.keys(), key=lambda k: max(ts(x) for x in groups[k]))
+                pulled = sorted(groups[last_key], key=ts, reverse=False)[:PACK_SIZE]
+
+        # 3) fallback: take the newest PACK_SIZE by timestamp
+        if not pulled:
+            pulled = sorted(items, key=ts, reverse=True)[:PACK_SIZE]
+
+        # Format
         lines = []
         for i, it in enumerate(pulled, 1):
-            name = it.get("name") or it.get("player") or it.get("printcode") or it.get("card_id") or "Unknown"
+            name   = it.get("name") or it.get("player") or it.get("printcode") or it.get("card_id") or "Unknown"
             rarity = it.get("rarity") or "—"
-            club = it.get("club") or it.get("Club") or ""
-            pos = it.get("position") or ""
-            serial = f" #{it['serial']}" if it.get("serial") else ""
-            bits = [rarity, club, pos]
-            bits = [b for b in bits if b]
-            lines.append(f"{i}. **{name}** · {' • '.join(bits)}{serial}")
+            club   = it.get("club") or it.get("Club") or ""
+            pos    = it.get("position") or ""
+            serial = f" #{it['serial']}" if it.get("serial") else (f" #{it['serial_no']}" if it.get("serial_no") else "")
+            bits   = [rarity, club, pos]
+            lines.append(f"{i}. **{name}** · {' • '.join([b for b in bits if b])}{serial}")
 
-        emb = discord.Embed(title="Your most recent pack",
-                            description="\n".join(lines),
-                            color=discord.Color.gold())
+        emb = discord.Embed(
+            title="Your most recent pack",
+            description="\n".join(lines),
+            color=discord.Color.gold()
+        )
         await interaction.followup.send(embed=emb, ephemeral=True)
+
     except Exception as e:
         await interaction.followup.send(f"⚠️ Error: {e}", ephemeral=True)
+
 
 
 
@@ -651,12 +682,9 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
 
         if cards:
             pack_name = body.get("pack_name") or pack
-            await start_reveal_session(
-                interaction, cards,
-                pack_name=pack_name,
-                god=body.get("godPack"), best=None
-            )
+            await start_reveal_session(interaction, cards, pack_name=pack_name)
             return
+
 
         # nothing returned → see if anything minted; if not, tell user
         recovered = await _recover_from_collection()
