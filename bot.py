@@ -16,7 +16,7 @@ print("Loading .env from:", env_path or "(not found)")
 load_dotenv(find_dotenv(), override=True)
 env_path = find_dotenv()
 
-
+import time
 import json  # add this if not present
 import discord
 from discord import app_commands
