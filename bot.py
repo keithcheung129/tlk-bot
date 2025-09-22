@@ -479,7 +479,7 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
         def ts(it):
             try: return int(it.get("acquired_ts") or it.get("ts") or 0)
             except: return 0
-        recent = [it for it in items if ts(it) >= started_ms - 120000]
+        recent = [it for it in items if ts(it) >= started_ms - 200000]
         pool = recent[:PACK_SIZE] or items[:PACK_SIZE]
         return [_normalize_card(it) for it in pool]
 
