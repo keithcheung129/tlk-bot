@@ -371,21 +371,63 @@ async def last_pack(interaction: discord.Interaction):
             v = x.get("acquired_ts") or x.get("ts") or 0
             try: return int(v)
             except: return 0
-        key = "draw_id" if any("draw_id" in i for i in items) else None
-        if not key and any("commit" in i for i in items):
-            key = "commit"
+        
+        
+                # --- prefer draw_id, then commit; else cluster by time gaps ---
+        def sort_by_ts(lst): 
+            return sorted(lst, key=ts)  # ascending (oldest→newest)
+
         pulled = None
-        if key:
+
+        # 1) draw_id path
+        if any("draw_id" in i for i in items):
             groups = {}
             for it in items:
-                k = it.get(key)
-                if not k: continue
+                k = it.get("draw_id")
+                if not k: 
+                    continue
                 groups.setdefault(k, []).append(it)
             if groups:
                 last_key = max(groups.keys(), key=lambda k: max(ts(x) for x in groups[k]))
-                pulled = sorted(groups[last_key], key=ts, reverse=False)[:PACK_SIZE]
+                pulled = sort_by_ts(groups[last_key])[-PACK_SIZE:]
+
+        # 2) commit path
+        if not pulled and any("commit" in i for i in items):
+            groups = {}
+            for it in items:
+                k = it.get("commit")
+                if not k: 
+                    continue
+                groups.setdefault(k, []).append(it)
+            if groups:
+                last_key = max(groups.keys(), key=lambda k: max(ts(x) for x in groups[k]))
+                pulled = sort_by_ts(groups[last_key])[-PACK_SIZE:]
+
+        # 3) fallback: cluster by timestamp gaps (30s)
+        if not pulled:
+            items_sorted = sort_by_ts(items)
+            clusters = []
+            cur = []
+            prev_t = None
+            for it in items_sorted:
+                t = ts(it)
+                if prev_t is None or (t - prev_t) <= 30_000:
+                    cur.append(it)
+                else:
+                    if cur: clusters.append(cur)
+                    cur = [it]
+                prev_t = t
+            if cur: 
+                clusters.append(cur)
+            if clusters:
+                pulled = clusters[-1][-PACK_SIZE:]
+
+        # final safety: if still nothing, just show newest 5 (old behaviour)
         if not pulled:
             pulled = sorted(items, key=ts, reverse=True)[:PACK_SIZE]
+
+
+        
         lines = []
         for i, it in enumerate(pulled, 1):
             name   = it.get("name") or it.get("player") or it.get("printcode") or it.get("card_id") or "Unknown"
