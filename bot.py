@@ -350,7 +350,7 @@ async def balance(interaction: discord.Interaction):
 async def last_pack(interaction: discord.Interaction):
     if not await ensure_channel(interaction):
         return
-        await interaction.response.defer(ephemeral=True, thinking=True)
+    await interaction.response.defer(ephemeral=True, thinking=True)
 
     PACK_SIZE = 5
 
