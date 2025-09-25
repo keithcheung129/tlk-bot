@@ -350,101 +350,60 @@ async def balance(interaction: discord.Interaction):
 async def last_pack(interaction: discord.Interaction):
     if not await ensure_channel(interaction):
         return
-    await interaction.response.defer(ephemeral=True, thinking=True)
+        await interaction.response.defer(ephemeral=True, thinking=True)
 
     PACK_SIZE = 5
+
     try:
-        res = await call_sheet("collection", {
-            "user_id": str(interaction.user.id),
-            "page": 1,
-            "page_size": 50,
-            "unique_only": False,
-            "rarity": "ALL",
-            "position": "ALL",
-            "batch": "ALL",
-        })
-        items = (res or {}).get("items") or []
-        if not items:
-            await interaction.followup.send("No recent cards found.", ephemeral=True)
+        # --- Ask API for the latest draw row for this user ---
+        last = await call_sheet("last_draw", {"user_id": str(interaction.user.id)})
+        body = last.get("data", last) if isinstance(last, dict) else {}
+
+        # Parse the result_json column
+        pulls = []
+        if "result_json" in body:
+            try:
+                parsed = json.loads(body["result_json"])
+                if isinstance(parsed, list):
+                    pulls = parsed
+            except Exception:
+                pass
+        # Fallback: if API already parsed
+        if not pulls and isinstance(body.get("results"), list):
+            pulls = body["results"]
+
+        if not pulls:
+            await interaction.followup.send("No recent pack found for you.", ephemeral=True)
             return
-        def ts(x):
-            v = x.get("acquired_ts") or x.get("ts") or 0
-            try: return int(v)
-            except: return 0
-        
-        
-                # --- prefer draw_id, then commit; else cluster by time gaps ---
-        def sort_by_ts(lst): 
-            return sorted(lst, key=ts)  # ascending (oldest→newest)
 
-        pulled = None
+        pack_name = body.get("pack_id") or "Last Pack"
 
-        # 1) draw_id path
-        if any("draw_id" in i for i in items):
-            groups = {}
-            for it in items:
-                k = it.get("draw_id")
-                if not k: 
-                    continue
-                groups.setdefault(k, []).append(it)
-            if groups:
-                last_key = max(groups.keys(), key=lambda k: max(ts(x) for x in groups[k]))
-                pulled = sort_by_ts(groups[last_key])[-PACK_SIZE:]
+        # Keep only PACK_SIZE if result_json contains more
+        pulled = pulls[:PACK_SIZE]
 
-        # 2) commit path
-        if not pulled and any("commit" in i for i in items):
-            groups = {}
-            for it in items:
-                k = it.get("commit")
-                if not k: 
-                    continue
-                groups.setdefault(k, []).append(it)
-            if groups:
-                last_key = max(groups.keys(), key=lambda k: max(ts(x) for x in groups[k]))
-                pulled = sort_by_ts(groups[last_key])[-PACK_SIZE:]
-
-        # 3) fallback: cluster by timestamp gaps (30s)
-        if not pulled:
-            items_sorted = sort_by_ts(items)
-            clusters = []
-            cur = []
-            prev_t = None
-            for it in items_sorted:
-                t = ts(it)
-                if prev_t is None or (t - prev_t) <= 30_000:
-                    cur.append(it)
-                else:
-                    if cur: clusters.append(cur)
-                    cur = [it]
-                prev_t = t
-            if cur: 
-                clusters.append(cur)
-            if clusters:
-                pulled = clusters[-1][-PACK_SIZE:]
-
-        # final safety: if still nothing, just show newest 5 (old behaviour)
-        if not pulled:
-            pulled = sorted(items, key=ts, reverse=True)[:PACK_SIZE]
-
-
-        
+        # --- Build response embed exactly from those pulls ---
         lines = []
         for i, it in enumerate(pulled, 1):
             name   = it.get("name") or it.get("player") or it.get("printcode") or it.get("card_id") or "Unknown"
-            rarity = it.get("rarity") or "—"
+            rarity = (it.get("rarity") or "").strip()
             club   = it.get("club") or it.get("Club") or ""
             pos    = it.get("position") or ""
-            serial = f" #{it['serial']}" if it.get("serial") else (f" #{it['serial_no']}" if it.get("serial_no") else "")
-            bits   = [rarity, club, pos]
-            lines.append(f"{i}. **{name}** · {' • '.join([b for b in bits if b])}{serial}")
+            serial = it.get("serial") or it.get("serial_no")
+            serial_txt = f" #{serial}" if serial not in (None, "", 0) else ""
+            bits = [rarity, club, pos]
+            line = f"{i}. **{name}** · {' • '.join([b for b in bits if b])}{serial_txt}"
+            lines.append(line)
+
         emb = discord.Embed(
-            title="Your most recent pack",
+            title=f"Your most recent pack — {pack_name}",
             description="\n".join(lines),
             color=discord.Color.gold(),
         )
         await interaction.followup.send(embed=emb, ephemeral=True)
+
     except Exception as e:
         await interaction.followup.send(f"⚠️ Error: {e}", ephemeral=True)
+
 
 @bot.tree.command(description="Sell one duplicate of a specific card_id (keeps your first copy).")
 @app_commands.guilds(discord.Object(id=GID))
