@@ -549,23 +549,60 @@ async def starter(interaction: discord.Interaction):
             await interaction.followup.send(f"Error: {e}", ephemeral=True)
 
 # --- Admin grant ---
-@bot.tree.command(name="grant", description="Admin: grant tickets to a user.")
+@bot.tree.command(name="grant", description="Admin: grant tickets to a user or everyone.")
 @app_commands.guilds(discord.Object(id=GID))
-@app_commands.describe(user="Target user", amount="Number of tickets", reason="Reason for the grant")
-async def grant(interaction: discord.Interaction, user: discord.User, amount: int, reason: str = "admin grant"):
-    if not await ensure_channel(interaction): return
+@app_commands.describe(
+    user="Target user (ignored if grant_all=True)",
+    amount="Number of tickets to grant",
+    grant_all="Grant to all active players",
+    reason="Reason for the grant"
+)
+async def grant(
+    interaction: discord.Interaction,
+    amount: int,
+    grant_all: bool = False,
+    user: discord.User | None = None,
+    reason: str = "admin grant",
+):
+    # channel + admin guards
+    if not await ensure_channel(interaction):
+        return
     if interaction.user.id != ADMIN_USER_ID:
         await interaction.response.send_message("Only the game admin can use this.", ephemeral=True)
         return
+
     await interaction.response.defer(ephemeral=True)
+
     try:
-        data = await call_sheet("grant", {"user_id": str(user.id), "amount": amount, "reason": reason})
+        if grant_all:
+            # Backend should implement: action="grant_all" → { ok, data:{ affected:int, preview?:bool } }
+            data = await call_sheet("grant_all", {"amount": amount, "reason": reason})
+            affected = int(data.get("affected", 0)) if isinstance(data, dict) else 0
+            await interaction.followup.send(
+                f"✅ Granted **{amount}** tickets to **{affected}** active players."
+                + (f"  (Reason: {reason})" if reason else ""),
+                ephemeral=True,
+            )
+            return
+
+        # single-user path (existing behavior)
+        if not user:
+            await interaction.followup.send(
+                "Please select a user or set `grant_all=True`.", ephemeral=True
+            )
+            return
+
+        data = await call_sheet("grant_all", {"amount": amount, "reason": reason})
+        new_bal = data.get("balance", 0) if isinstance(data, dict) else 0
         await interaction.followup.send(
-            f"Granted **{amount}** to {user.mention}. New balance: **{data.get('balance',0)}**",
+            f"✅ Granted **{amount}** to {user.mention}. New balance: **{new_bal}**"
+            + (f"  (Reason: {reason})" if reason else ""),
             ephemeral=True,
         )
+
     except Exception as e:
-        await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        await interaction.followup.send(f"⚠️ Error: {e}", ephemeral=True)
+
 
 # --- Collection ---
 RARITY_CHOICES = [app_commands.Choice(name=x, value=x) for x in ["ALL","N","R","AR","SR","SSR"]]
