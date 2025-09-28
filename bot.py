@@ -576,7 +576,11 @@ async def grant(
     try:
         if grant_all:
             # Backend should implement: action="grant_all" → { ok, data:{ affected:int, preview?:bool } }
-            data = await call_sheet("grant_all", {"amount": amount, "reason": reason})
+            await call_sheet("grant_all", {
+                "amount": amount,
+                "reason": reason,
+                "ref": f"grant_all:{interaction.user.id}"
+            })
             affected = int(data.get("affected", 0)) if isinstance(data, dict) else 0
             await interaction.followup.send(
                 f"✅ Granted **{amount}** tickets to **{affected}** active players."
@@ -584,7 +588,6 @@ async def grant(
                 ephemeral=True,
             )
             return
-
         # single-user path (existing behavior)
         if not user:
             await interaction.followup.send(
@@ -592,7 +595,14 @@ async def grant(
             )
             return
 
-        data = await call_sheet("grant", {"amount": amount, "reason": reason})
+        data = await call_sheet("grant", {
+            "user_id": str(user.id),
+            "amount": amount,
+            "reason": reason,
+            # optional but recommended:
+            "ref": f"grant:{interaction.user.id}"
+        })
+
         new_bal = data.get("balance", 0) if isinstance(data, dict) else 0
         await interaction.followup.send(
             f"✅ Granted **{amount}** to {user.mention}. New balance: **{new_bal}**"
