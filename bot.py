@@ -592,7 +592,7 @@ async def grant(
             )
             return
 
-        data = await call_sheet("grant_all", {"amount": amount, "reason": reason})
+        data = await call_sheet("grant", {"amount": amount, "reason": reason})
         new_bal = data.get("balance", 0) if isinstance(data, dict) else 0
         await interaction.followup.send(
             f"✅ Granted **{amount}** to {user.mention}. New balance: **{new_bal}**"
