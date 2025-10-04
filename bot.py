@@ -408,6 +408,7 @@ async def last_pack(interaction: discord.Interaction):
 @bot.tree.command(description="Sell one duplicate of a specific card_id (keeps your first copy).")
 @app_commands.guilds(discord.Object(id=GID))
 @app_commands.describe(card_id="Exact card_id from the card list (e.g., PLR123)")
+@app_commands.autocomplete(card_id=ac_card_id)
 async def sell(interaction: discord.Interaction, card_id: str):
     if not await ensure_channel(interaction):
         return await interaction.response.send_message(f"Use this in <#{COMMAND_CHANNEL_ID}>.", ephemeral=True)
@@ -685,6 +686,221 @@ async def resync(interaction: discord.Interaction):
     guild = discord.Object(id=gid) if gid else None
     synced = await bot.tree.sync(guild=guild) if guild else await bot.tree.sync()
     await interaction.followup.send(f"Synced: {', '.join(c.name for c in synced)}", ephemeral=True)
+
+# --- Autocomplete: card_id from Dex (name/club/ID search) ---
+async def ac_card_id(itx: discord.Interaction, current: str):
+    q = (current or "").strip()
+    if not q:
+        return []
+    try:
+        res = await call_sheet("dex_autocomplete", {
+            "query": q,
+            "type": "player",   # change to "ALL" if you want managers/stadiums, etc.
+            "limit": 25
+        })
+        data  = res.get("data", res) if isinstance(res, dict) else {}
+        items = data.get("items") or []
+        # Each item: {label, value(card_id), name, club, rarity, ...}
+        out = []
+        for it in items[:25]:
+            label = it.get("label") or f"{it.get('name','?')}"
+            value = it.get("value") or it.get("card_id") or ""
+            if not value:
+                continue
+            # Show label + the ID so users feel confident
+            shown = f"{label} — {value}"
+            out.append(app_commands.Choice(name=shown[:100], value=value))
+        return out
+    except Exception:
+        # Fail quietly to keep autocomplete snappy
+        return []
+
+
+@bot.tree.command(name="craft", description="Craft a card by card_id (uses your crafting costs).")
+@app_commands.guilds(discord.Object(id=GID))
+@app_commands.describe(card_id="Pick a card (type to search by name/club/id)", quantity="How many to craft", reason="Optional note for ledger")
+@app_commands.autocomplete(card_id=ac_card_id)
+async def craft(interaction: discord.Interaction, card_id: str, quantity: int = 1, reason: str = "craft via bot"):
+    if not await ensure_channel(interaction):
+        return
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        payload = {
+            "user_id": str(interaction.user.id),
+            "card_id": card_id.strip(),
+            "quantity": max(1, int(quantity)),
+            "reason": reason,
+        }
+        res  = await call_sheet("craft", payload)
+        data = res.get("data", res) if isinstance(res, dict) else {}
+
+        # Error path (flexible)
+        if (isinstance(data, dict) and data.get("error")) or (isinstance(res, dict) and res.get("error")):
+            err = data.get("error") or res.get("error") or "craft failed"
+            return await interaction.followup.send(f"⚠️ Craft error: {err}", ephemeral=True)
+
+        # Costs (support multiple key names)
+        tickets_spent = data.get("tickets_spent") or data.get("spent_tickets") or 0
+        tokens_spent  = data.get("tokens_spent")  or data.get("spent_tokens")  or 0
+        mats_spent    = data.get("materials_spent") or {}  # if you track shards/etc.
+
+        # Balances (if returned)
+        tix_bal = data.get("tickets_balance") or data.get("balance_tickets")
+        tok_bal = data.get("tokens_balance")  or data.get("balance_tokens")
+
+        # Yield/results
+        results = data.get("results") or data.get("crafted") or data.get("items") or []
+        if isinstance(results, dict):
+            results = [results]
+
+        # Build sections
+        yield_lines = []
+        for i, it in enumerate(results, 1):
+            nm = it.get("name") or it.get("player") or it.get("printcode") or it.get("card_id") or "Unknown"
+            rr = (it.get("rarity") or "").strip()
+            sn = it.get("serial") or it.get("serial_no")
+            sn_txt = f" #{sn}" if sn not in (None, "", 0) else ""
+            yield_lines.append(f"{i}. **{nm}** {f'[{rr}]' if rr else ''}{sn_txt}")
+
+        cost_bits = []
+        if tickets_spent: cost_bits.append(f"🎟️ Tickets: −{int(tickets_spent)}")
+        if tokens_spent:  cost_bits.append(f"🔑 Tokens: −{int(tokens_spent)}")
+        if isinstance(mats_spent, dict) and mats_spent:
+            mat_txt = ", ".join([f"{k}: −{v}" for k,v in mats_spent.items()])
+            cost_bits.append(f"🧩 Materials: {mat_txt}")
+
+        bal_bits = []
+        if tix_bal is not None: bal_bits.append(f"🎟️ {int(tix_bal)}")
+        if tok_bal is not None: bal_bits.append(f"🔑 {int(tok_bal)}")
+
+        desc = []
+        if cost_bits:
+            desc.append("**Cost**\n" + "\n".join(f"• {x}" for x in cost_bits))
+        if yield_lines:
+            desc.append("**Yield**\n" + "\n".join(yield_lines))
+        if not desc:
+            desc.append("Crafted successfully.")
+
+        emb = discord.Embed(
+            title=f"🛠️ Crafted ×{max(1,int(quantity))} — {card_id}",
+            description="\n\n".join(desc),
+            color=discord.Color.green(),
+        )
+        if bal_bits:
+            emb.set_footer(text="Balance: " + " | ".join(bal_bits))
+
+        await interaction.followup.send(embed=emb, ephemeral=True)
+
+    except Exception as e:
+        await interaction.followup.send(f"⚠️ Error: {e}", ephemeral=True)
+
+
+@bot.tree.command(name="shop", description="View shop or buy an item by ID.")
+@app_commands.guilds(discord.Object(id=GID))
+@app_commands.describe(buy_item_id="Item/sku ID to buy (leave empty to list)", quantity="How many to buy")
+async def shop(interaction: discord.Interaction, buy_item_id: str = "", quantity: int = 1):
+    if not await ensure_channel(interaction):
+        return
+    await interaction.response.defer(ephemeral=True)
+
+    try:
+        buy_item_id = buy_item_id.strip()
+        qty = max(1, int(quantity))
+
+        if not buy_item_id:
+            # LIST
+            res  = await call_sheet("shop", {"op": "list"})
+            data = res.get("data", res) if isinstance(res, dict) else {}
+            items = data.get("items") or data.get("shop") or data.get("list") or []
+
+            if not isinstance(items, list) or not items:
+                return await interaction.followup.send("Shop is empty right now.", ephemeral=True)
+
+            emb = discord.Embed(
+                title="🛒 Shop — Available Items",
+                description="Use `/shop buy_item_id:<id>` to purchase.",
+                color=discord.Color.blurple(),
+            )
+            for it in items[:12]:
+                iid   = str(it.get("id") or it.get("sku") or it.get("item_id") or "?")
+                name  = it.get("name") or it.get("title") or iid
+                price = it.get("price") or it.get("cost") or {}
+                cur   = (price.get("currency") if isinstance(price, dict) else None) or ""
+                val   = (price.get("value")    if isinstance(price, dict) else price) or 0
+                stock = it.get("stock") if it.get("stock") not in (None, "") else it.get("quantity")
+                lim   = it.get("limit") or it.get("per_user_limit")
+                bits  = []
+                if val:   bits.append(f"Price: {val} {cur}".strip())
+                if stock is not None: bits.append(f"Stock: {stock}")
+                if lim:   bits.append(f"Limit: {lim}")
+                emb.add_field(name=f"{iid} — {name}", value=(" • ".join(bits) or "\u200b"), inline=False)
+
+            await interaction.followup.send(embed=emb, ephemeral=True)
+            return
+
+        # BUY
+        payload = {
+            "user_id": str(interaction.user.id),
+            "item_id": buy_item_id,
+            "sku": buy_item_id,
+            "id": buy_item_id,
+            "quantity": qty,
+            "op": "buy",
+        }
+        res  = await call_sheet("shop", payload)
+        data = res.get("data", res) if isinstance(res, dict) else {}
+        if isinstance(data, dict) and (data.get("error") or res.get("error")):
+            err = data.get("error") or res.get("error")
+            return await interaction.followup.send(f"⚠️ Purchase failed: {err}", ephemeral=True)
+
+        # Cost from response
+        tickets_spent = data.get("tickets_spent") or data.get("spent_tickets") or 0
+        tokens_spent  = data.get("tokens_spent")  or data.get("spent_tokens")  or 0
+        price_desc = []
+        if tickets_spent: price_desc.append(f"🎟️ Tickets: −{int(tickets_spent)}")
+        if tokens_spent:  price_desc.append(f"🔑 Tokens: −{int(tokens_spent)}")
+
+        # Yield (what user received)
+        bought = data.get("items") or data.get("results") or data.get("bought") or []
+        if isinstance(bought, dict):
+            bought = [bought]
+        yield_lines = []
+        for i, it in enumerate(bought, 1):
+            nm = it.get("name") or it.get("player") or it.get("title") or it.get("card_id") or buy_item_id
+            rr = (it.get("rarity") or "").strip()
+            sn = it.get("serial") or it.get("serial_no")
+            sn_txt = f" #{sn}" if sn not in (None, "", 0) else ""
+            yield_lines.append(f"{i}. **{nm}** {f'[{rr}]' if rr else ''}{sn_txt}")
+
+        # Balances
+        tickets_bal = data.get("tickets_balance")
+        tokens_bal  = data.get("tokens_balance")
+        bal_bits = []
+        if tickets_bal is not None: bal_bits.append(f"🎟️ {int(tickets_bal)}")
+        if tokens_bal  is not None: bal_bits.append(f"🔑 {int(tokens_bal)}")
+
+        sections = []
+        if price_desc:
+            sections.append("**Cost**\n" + "\n".join(f"• {x}" for x in price_desc))
+        if yield_lines:
+            sections.append("**Yield**\n" + "\n".join(yield_lines))
+
+        emb = discord.Embed(
+            title=f"✅ Purchased — {buy_item_id} ×{qty}",
+            description="\n\n".join(sections) if sections else "Purchase complete.",
+            color=discord.Color.green(),
+        )
+        if bal_bits:
+            emb.set_footer(text="Balance: " + " | ".join(bal_bits))
+
+        await interaction.followup.send(embed=emb, ephemeral=True)
+
+    except Exception as e:
+        await interaction.followup.send(f"⚠️ Error: {e}", ephemeral=True)
+
+
+
 
 # --- Error handler ---
 @bot.tree.error
