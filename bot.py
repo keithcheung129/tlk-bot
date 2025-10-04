@@ -308,11 +308,44 @@ async def start_reveal_session(
     view = RevealState(pulls_sorted, interaction.user.id, pack_name, god, best)
     await interaction.channel.send(embed=embed_back, view=view)
 
+
+
+# --- Autocomplete: card_id from Dex (name/club/ID search) ---
+async def ac_card_id(itx: discord.Interaction, current: str):
+    q = (current or "").strip()
+    if not q:
+        return []
+    try:
+        res = await call_sheet("dex_autocomplete", {
+            "query": q,
+            "type": "player",   # change to "ALL" if you want managers/stadiums, etc.
+            "limit": 25
+        })
+        data  = res.get("data", res) if isinstance(res, dict) else {}
+        items = data.get("items") or []
+        # Each item: {label, value(card_id), name, club, rarity, ...}
+        out = []
+        for it in items[:25]:
+            label = it.get("label") or f"{it.get('name','?')}"
+            value = it.get("value") or it.get("card_id") or ""
+            if not value:
+                continue
+            # Show label + the ID so users feel confident
+            shown = f"{label} — {value}"
+            out.append(app_commands.Choice(name=shown[:100], value=value))
+        return out
+    except Exception:
+        # Fail quietly to keep autocomplete snappy
+        return []
+
+
+
 # --- Commands ---
 @bot.tree.command(name="ping", description="Test command that replies immediately")
 @app_commands.guilds(discord.Object(id=GID))
 async def ping(interaction: discord.Interaction):
     await interaction.response.send_message("pong ✅", ephemeral=True)
+
 
 @bot.tree.command(name="balance", description="Show your Tickets and Tokens")
 @app_commands.guilds(discord.Object(id=GID))
@@ -687,33 +720,7 @@ async def resync(interaction: discord.Interaction):
     synced = await bot.tree.sync(guild=guild) if guild else await bot.tree.sync()
     await interaction.followup.send(f"Synced: {', '.join(c.name for c in synced)}", ephemeral=True)
 
-# --- Autocomplete: card_id from Dex (name/club/ID search) ---
-async def ac_card_id(itx: discord.Interaction, current: str):
-    q = (current or "").strip()
-    if not q:
-        return []
-    try:
-        res = await call_sheet("dex_autocomplete", {
-            "query": q,
-            "type": "player",   # change to "ALL" if you want managers/stadiums, etc.
-            "limit": 25
-        })
-        data  = res.get("data", res) if isinstance(res, dict) else {}
-        items = data.get("items") or []
-        # Each item: {label, value(card_id), name, club, rarity, ...}
-        out = []
-        for it in items[:25]:
-            label = it.get("label") or f"{it.get('name','?')}"
-            value = it.get("value") or it.get("card_id") or ""
-            if not value:
-                continue
-            # Show label + the ID so users feel confident
-            shown = f"{label} — {value}"
-            out.append(app_commands.Choice(name=shown[:100], value=value))
-        return out
-    except Exception:
-        # Fail quietly to keep autocomplete snappy
-        return []
+
 
 
 @bot.tree.command(name="craft", description="Craft a card by card_id (uses your crafting costs).")
