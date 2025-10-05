@@ -605,39 +605,61 @@ async def grant(
         await interaction.response.send_message("Only the game admin can use this.", ephemeral=True)
         return
 
+    # basic input guard
+    if amount <= 0:
+        await interaction.response.send_message("Amount must be a positive integer.", ephemeral=True)
+        return
+
     await interaction.response.defer(ephemeral=True)
 
     try:
         if grant_all:
-            # Backend should implement: action="grant_all" → { ok, data:{ affected:int, preview?:bool } }
-            await call_sheet("grant_all", {
+            # Backend should return: { ok: bool, data: { affected:int, preview?:bool }, error?: str }
+            resp = await call_sheet("grant_all", {
                 "amount": amount,
                 "reason": reason,
                 "ref": f"grant_all:{interaction.user.id}"
             })
-            affected = int(data.get("affected", 0)) if isinstance(data, dict) else 0
-            await interaction.followup.send(
+
+            ok = isinstance(resp, dict) and resp.get("ok", True)
+            if not ok:
+                err = (resp or {}).get("error", "grant_all failed")
+                raise RuntimeError(err)
+
+            data = resp.get("data", {}) if isinstance(resp, dict) else {}
+            affected = int(data.get("affected", 0))
+            preview = bool(data.get("preview", False))
+
+            msg = (
                 f"✅ Granted **{amount}** tickets to **{affected}** active players."
-                + (f"  (Reason: {reason})" if reason else ""),
-                ephemeral=True,
+                + (f"  (Reason: {reason})" if reason else "")
+                + ("  *(Preview run — no changes applied)*" if preview else "")
             )
+            await interaction.followup.send(msg, ephemeral=True)
             return
-        # single-user path (existing behavior)
+
+        # single-user path
         if not user:
             await interaction.followup.send(
                 "Please select a user or set `grant_all=True`.", ephemeral=True
             )
             return
 
-        data = await call_sheet("grant", {
+        resp = await call_sheet("grant", {
             "user_id": str(user.id),
             "amount": amount,
             "reason": reason,
-            # optional but recommended:
             "ref": f"grant:{interaction.user.id}"
         })
 
-        new_bal = data.get("balance", 0) if isinstance(data, dict) else 0
+        ok = isinstance(resp, dict) and resp.get("ok", True)
+        if not ok:
+            err = (resp or {}).get("error", "grant failed")
+            raise RuntimeError(err)
+
+        data = resp.get("data", {}) if isinstance(resp, dict) else {}
+        new_bal = int(data.get("balance", 0))
+
         await interaction.followup.send(
             f"✅ Granted **{amount}** to {user.mention}. New balance: **{new_bal}**"
             + (f"  (Reason: {reason})" if reason else ""),
@@ -646,6 +668,7 @@ async def grant(
 
     except Exception as e:
         await interaction.followup.send(f"⚠️ Error: {e}", ephemeral=True)
+
 
 
 # --- Collection ---
