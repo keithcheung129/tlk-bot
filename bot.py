@@ -824,26 +824,29 @@ async def shop(interaction: discord.Interaction, buy_item_id: str = "", quantity
             if not isinstance(items, list) or not items:
                 return await interaction.followup.send("Shop is empty right now.", ephemeral=True)
 
-            emb = discord.Embed(
-                title="🛒 Shop — Available Items",
-                description="Use `/shop buy_item_id:<id>` to purchase.",
-                color=discord.Color.blurple(),
-            )
-            for it in items[:12]:
-                iid   = str(it.get("id") or it.get("sku") or it.get("item_id") or "?")
-                name  = it.get("name") or it.get("title") or iid
-                price = it.get("price") or it.get("cost") or {}
-                cur   = (price.get("currency") if isinstance(price, dict) else None) or ""
-                val   = (price.get("value")    if isinstance(price, dict) else price) or 0
-                stock = it.get("stock") if it.get("stock") not in (None, "") else it.get("quantity")
-                lim   = it.get("limit") or it.get("per_user_limit")
-                bits  = []
-                if val:   bits.append(f"Price: {val} {cur}".strip())
-                if stock is not None: bits.append(f"Stock: {stock}")
-                if lim:   bits.append(f"Limit: {lim}")
-                emb.add_field(name=f"{iid} — {name}", value=(" • ".join(bits) or "\u200b"), inline=False)
+            chunks = [items[i:i+25] for i in range(0, len(items), 25)]
+            for idx, chunk in enumerate(chunks, start=1):
+                emb = discord.Embed(
+                    title=f"🛒 Shop — Available Items (Page {idx}/{len(chunks)})",
+                    description="Use `/shop buy_item_id:<card_id>` to purchase.",
+                    color=discord.Color.blurple(),
+                )
+                for it in chunk:
+                    iid  = str(it.get("card_id") or it.get("id") or it.get("sku") or it.get("item_id") or "?")
+                    name = it.get("name") or it.get("title") or iid
+                    price= it.get("price") or it.get("cost") or {}
+                    cur  = (price.get("currency") if isinstance(price, dict) else None) or ""
+                    val  = (price.get("value") if isinstance(price, dict) else price) or 0
+                    stock= it.get("stock") if it.get("stock") not in (None, "") else it.get("quantity")
+                    lim  = it.get("limit") or it.get("per_user_limit")
+                    bits = [f"ID: {iid}"]
+                    if val:   bits.append(f"Price: {val} {cur}".strip())
+                    if stock is not None: bits.append(f"Stock: {stock}")
+                    if lim:   bits.append(f"Limit: {lim}")
+                    emb.add_field(name=name, value=(" • ".join(bits) or "\u200b"), inline=False)
 
-            await interaction.followup.send(embed=emb, ephemeral=True)
+                await interaction.followup.send(embed=emb, ephemeral=True)
+
             return
 
         # BUY
