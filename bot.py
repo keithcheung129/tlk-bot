@@ -491,7 +491,7 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
     PACK_SIZE = 5
     started_ms = int(time.time() * 1000)
 
-    action = PACK_ACTIONS.get(pack) or "open_base"
+    selector = PACK_ACTIONS.get(pack) or "open_base"
 
     def _extract(res):
         body = res.get("data", res) if isinstance(res, dict) else res
@@ -519,7 +519,13 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
         return [_normalize_card(it) for it in pool]
 
     try:
-        res = await call_sheet(action, {"user_id": user_id})
+        # If value looks like a legacy action (e.g., "open_base"), call it directly.
+        # Otherwise treat it as a manifest pack_id and call the generic endpoint.
+        if selector.startswith("open_"):
+            res = await call_sheet(selector, {"user_id": user_id})
+        else:
+            res = await call_sheet("open_pack", {"user_id": user_id, "pack_id": selector})
+
         cards, body = _extract(res)
         if cards:
             pack_name = body.get("pack_name") or pack
