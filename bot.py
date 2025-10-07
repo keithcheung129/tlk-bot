@@ -156,21 +156,41 @@ class RevealState(discord.ui.View):
         await itx.followup.send(embed=emb)
 
         try:
-            if HYPE_CHANNEL_ID and (self.god or any(x.get("rarity") in ("SR", "SSR") for x in self.pulls_sorted)):
+            if HYPE_CHANNEL_ID and (self.god or any(x.get("rarity") in ("SR","SSR") for x in self.pulls_sorted)):
+                # 1) get from cache, else fetch
                 chan = bot.get_channel(HYPE_CHANNEL_ID)
+                if chan is None:
+                    try:
+                        chan = await bot.fetch_channel(HYPE_CHANNEL_ID)
+                    except Exception as e:
+                        print("[hype] fetch_channel failed:", e)
+                        chan = None
+
+                # 2) if it’s a Forum parent, post to the current thread instead
+                if isinstance(chan, discord.ForumChannel):
+                    chan = itx.channel
+
                 if chan:
                     user = itx.user.mention
-                    big = [x for x in self.pulls_sorted if x.get("rarity") in ("SR","SSR")]
+                    big = [x for x in self.pulls_sorted if x.get("rarity") in ("SR", "SSR")]
                     if self.god:
-                        await chan.send(f"{user} just pulled a **GOD PACK**!! 🎉🔥")
+                        await chan.send(f"🎉 {user} just opened a **GOD PACK** in **{self.pack_name}**!")
                     elif big:
-                        # choose the best card to show in hype message
                         top = big[-1]
-                        await chan.send(
-                            f"{user} just pulled out a {top.get('rarity')} **{top.get('name')}**!!! Congrats!"
-                        )
-        except Exception:
-            pass
+                        msg = f"🎊 {user} just pulled a **{top.get('rarity')} {top.get('name')}**!"
+                        img = (top.get("image_ref") or "").strip()
+                        if img:
+                            emb = discord.Embed(
+                                color=0xFFD166 if top.get("rarity") == "SSR" else 0xFFA654,
+                                description=msg
+                            )
+                            emb.set_image(url=img)
+                            await chan.send(embed=emb)
+                        else:
+                            await chan.send(msg)
+        except Exception as e:
+            print("[hype] send failed:", e)
+
 
         async def _maybe_hype(self, itx: discord.Interaction, card: dict):
             """Post a hype message to HYPE_CHANNEL_ID for SR/SSR or God Pack (once)."""
