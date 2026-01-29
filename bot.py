@@ -774,7 +774,11 @@ async def resync(interaction: discord.Interaction):
 
 @bot.tree.command(name="craft", description="Craft a card by card_id (uses your crafting costs).")
 @app_commands.guilds(discord.Object(id=GID))
-@app_commands.describe(card_id="Pick a card (type to search by name/club/id)", quantity="How many to craft", reason="Optional note for ledger")
+@app_commands.describe(
+    card_id="Pick a card (type to search by name/club/id)",
+    quantity="How many to craft",
+    reason="Optional note for ledger"
+)
 @app_commands.autocomplete(card_id=ac_card_id)
 async def craft(interaction: discord.Interaction, card_id: str, quantity: int = 1, reason: str = "craft via bot"):
     if not await ensure_channel(interaction):
@@ -782,74 +786,69 @@ async def craft(interaction: discord.Interaction, card_id: str, quantity: int = 
     await interaction.response.defer(ephemeral=True)
 
     try:
-        payload = {
-            "user_id": str(interaction.user.id),
-            "card_id": card_id.strip(),
-            "quantity": max(1, int(quantity)),
-            "reason": reason,
-        }
-        res  = await call_sheet("craft", payload)
-        data = res.get("data", res) if isinstance(res, dict) else {}
+        card_id = (card_id or "").strip()
+        qty = max(1, int(quantity))
 
-        # Error path (flexible)
-        if (isinstance(data, dict) and data.get("error")) or (isinstance(res, dict) and res.get("error")):
-            err = data.get("error") or res.get("error") or "craft failed"
-            return await interaction.followup.send(f"⚠️ Craft error: {err}", ephemeral=True)
+        # 1) Lookup rarity for this card_id (Apps Script apiCards_ supports `search`)
+        cards_res = await call_sheet("cards", {"search": card_id})
+        cards_data = cards_res.get("data", cards_res) if isinstance(cards_res, dict) else cards_res
+        items = (cards_data.get("items") or []) if isinstance(cards_data, dict) else []
 
-        # Costs (support multiple key names)
-        tickets_spent = data.get("tickets_spent") or data.get("spent_tickets") or 0
-        tokens_spent  = data.get("tokens_spent")  or data.get("spent_tokens")  or 0
-        mats_spent    = data.get("materials_spent") or {}  # if you track shards/etc.
+        # find exact match
+        meta = next((it for it in items if str(it.get("card_id", "")).strip() == card_id), None)
+        if not meta:
+            return await interaction.followup.send(f"⚠️ Could not find card metadata for `{card_id}`.", ephemeral=True)
 
-        # Balances (if returned)
-        tix_bal = data.get("tickets_balance") or data.get("balance_tickets")
-        tok_bal = data.get("tokens_balance")  or data.get("balance_tokens")
+        rarity = (meta.get("rarity") or "").strip().upper()
+        if not rarity:
+            return await interaction.followup.send(
+                f"⚠️ `{card_id}` has no rarity (might be a utility). Crafting is for player rarities only.",
+                ephemeral=True
+            )
 
-        # Yield/results
-        results = data.get("results") or data.get("crafted") or data.get("items") or []
-        if isinstance(results, dict):
-            results = [results]
+        # 2) Craft loop (backend crafts 1 per call)
+        crafted_all = []
+        last_balance = None
+        for _ in range(qty):
+            res = await call_sheet("craft", {
+                "user_id": str(interaction.user.id),
+                "rarity": rarity,
+                "mode": "specific",
+                "card_id": card_id,
+                "reason": reason,
+            })
+            data = res.get("data", res) if isinstance(res, dict) else res
+            if isinstance(data, dict) and data.get("error"):
+                return await interaction.followup.send(f"⚠️ Craft error: {data.get('error')}", ephemeral=True)
 
-        # Build sections
-        yield_lines = []
-        for i, it in enumerate(results, 1):
-            nm = it.get("name") or it.get("player") or it.get("printcode") or it.get("card_id") or "Unknown"
-            rr = (it.get("rarity") or "").strip()
-            sn = it.get("serial") or it.get("serial_no")
+            crafted = data.get("crafted") or []
+            if isinstance(crafted, dict):
+                crafted = [crafted]
+            crafted_all.extend(crafted)
+            last_balance = data.get("balance", last_balance)
+
+        # 3) Build output
+        lines = []
+        for i, it in enumerate(crafted_all, 1):
+            cid = it.get("card_id") or card_id
+            rr  = (it.get("rarity") or rarity).strip().upper()
+            sn  = it.get("serial_no") or it.get("serial")
             sn_txt = f" #{sn}" if sn not in (None, "", 0) else ""
-            yield_lines.append(f"{i}. **{nm}** {f'[{rr}]' if rr else ''}{sn_txt}")
-
-        cost_bits = []
-        if tickets_spent: cost_bits.append(f"🎟️ Tickets: −{int(tickets_spent)}")
-        if tokens_spent:  cost_bits.append(f"🔑 Tokens: −{int(tokens_spent)}")
-        if isinstance(mats_spent, dict) and mats_spent:
-            mat_txt = ", ".join([f"{k}: −{v}" for k,v in mats_spent.items()])
-            cost_bits.append(f"🧩 Materials: {mat_txt}")
-
-        bal_bits = []
-        if tix_bal is not None: bal_bits.append(f"🎟️ {int(tix_bal)}")
-        if tok_bal is not None: bal_bits.append(f"🔑 {int(tok_bal)}")
-
-        desc = []
-        if cost_bits:
-            desc.append("**Cost**\n" + "\n".join(f"• {x}" for x in cost_bits))
-        if yield_lines:
-            desc.append("**Yield**\n" + "\n".join(yield_lines))
-        if not desc:
-            desc.append("Crafted successfully.")
+            lines.append(f"{i}. **{cid}** [{rr}]{sn_txt}")
 
         emb = discord.Embed(
-            title=f"🛠️ Crafted ×{max(1,int(quantity))} — {card_id}",
-            description="\n\n".join(desc),
+            title=f"🛠️ Crafted ×{qty} — {card_id}",
+            description="**Yield**\n" + "\n".join(lines) if lines else "Crafted successfully.",
             color=discord.Color.green(),
         )
-        if bal_bits:
-            emb.set_footer(text="Balance: " + " | ".join(bal_bits))
+        if last_balance is not None:
+            emb.set_footer(text=f"Tokens balance: {int(float(last_balance))}")
 
         await interaction.followup.send(embed=emb, ephemeral=True)
 
     except Exception as e:
         await interaction.followup.send(f"⚠️ Error: {e}", ephemeral=True)
+
 
 
 @bot.tree.command(name="shop", description="View shop or buy an item by ID.")
