@@ -897,16 +897,23 @@ async def shop(interaction: discord.Interaction, buy_item_id: str = "", quantity
 
             return
 
-        # BUY
+        # BUY (utilities) — use the dedicated apiBuy_ endpoint
         payload = {
             "user_id": str(interaction.user.id),
-            "item_id": buy_item_id,
-            "sku": buy_item_id,
-            "id": buy_item_id,
-            "quantity": qty,
-            "op": "buy",
+            "card_id": buy_item_id,
         }
-        res  = await call_sheet("shop", payload)
+        # apiBuy_ buys exactly 1 per call; loop if qty > 1
+        results = []
+        last_balance = None
+        for _ in range(qty):
+            res = await call_sheet("buy", payload)
+            data = res.get("data", res) if isinstance(res, dict) else {}
+            if isinstance(data, dict) and data.get("error"):
+                return await interaction.followup.send(f"⚠️ Purchase failed: {data['error']}", ephemeral=True)
+            bought = data.get("bought") or {}
+            if bought:
+                results.append(bought)
+            last_balance = data.get("balance", last_balance)
         data = res.get("data", res) if isinstance(res, dict) else {}
         if isinstance(data, dict) and (data.get("error") or res.get("error")):
             err = data.get("error") or res.get("error")
@@ -924,12 +931,11 @@ async def shop(interaction: discord.Interaction, buy_item_id: str = "", quantity
         if isinstance(bought, dict):
             bought = [bought]
         yield_lines = []
-        for i, it in enumerate(bought, 1):
-            nm = it.get("name") or it.get("player") or it.get("title") or it.get("card_id") or buy_item_id
-            rr = (it.get("rarity") or "").strip()
-            sn = it.get("serial") or it.get("serial_no")
-            sn_txt = f" #{sn}" if sn not in (None, "", 0) else ""
-            yield_lines.append(f"{i}. **{nm}** {f'[{rr}]' if rr else ''}{sn_txt}")
+        for i, it in enumerate(results, 1):
+            cid = it.get("card_id") or buy_item_id
+            price = it.get("price")
+            price_txt = f" (−{int(price)} tokens)" if price not in (None, "", 0) else ""
+            yield_lines.append(f"{i}. `{cid}`{price_txt}")
 
         # Balances
         tickets_bal = data.get("tickets_balance")
@@ -946,11 +952,12 @@ async def shop(interaction: discord.Interaction, buy_item_id: str = "", quantity
 
         emb = discord.Embed(
             title=f"✅ Purchased — {buy_item_id} ×{qty}",
-            description="\n\n".join(sections) if sections else "Purchase complete.",
+            description="**Yield**\n" + "\n".join(yield_lines) if yield_lines else "Purchase complete.",
             color=discord.Color.green(),
         )
-        if bal_bits:
-            emb.set_footer(text="Balance: " + " | ".join(bal_bits))
+        if last_balance is not None:
+            emb.set_footer(text=f"Tokens balance: {int(float(last_balance))}")
+
 
         await interaction.followup.send(embed=emb, ephemeral=True)
 
