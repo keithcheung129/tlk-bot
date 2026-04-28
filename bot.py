@@ -528,14 +528,28 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
             "page": 1,
             "page_size": PACK_SIZE * 2,
             "unique_only": False,
-            "rarity": "ALL", "position": "ALL", "batch": "ALL",
+            "rarity": "ALL",
+            "position": "ALL",
+            "batch": "ALL",
         })
+
         items = (col or {}).get("items") or []
+
         def ts(it):
-            try: return int(it.get("acquired_ts") or it.get("ts") or 0)
-            except: return 0
+            try:
+                return int(it.get("acquired_ts") or it.get("ts") or 0)
+            except:
+                return 0
+
+        # Only take cards acquired in this session window
         recent = [it for it in items if ts(it) >= started_ms - 200000]
-        pool = recent[:PACK_SIZE] or items[:PACK_SIZE]
+
+        pool = recent[:PACK_SIZE]
+
+        # ❌ IMPORTANT: do NOT fallback to inventory top cards
+        if len(pool) < PACK_SIZE:
+            return []
+
         return [_normalize_card(it) for it in pool]
 
     try:
@@ -557,7 +571,7 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
             )
             return
         recovered = await _recover_from_collection()
-        if recovered:
+        if recovered and len(recovered) == PACK_SIZE:
             await start_reveal_session(
                 interaction,
                 recovered,
@@ -565,7 +579,11 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
                 god=False,
             )
         else:
-            await interaction.followup.send("⚠️ Pack did not open (no new cards). Please try again.", ephemeral=True)
+            await interaction.followup.send(
+                "⚠️ Could not safely recover this pack reveal. Please use /last_pack to check your latest pull.",
+                ephemeral=True
+            )
+    return
     except Exception as e:
         msg = str(e)
         if any(x in msg.lower() for x in ("upstream_timeout", "502", "bad gateway", "timeout")):
