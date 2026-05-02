@@ -583,7 +583,7 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
                 "⚠️ Could not safely recover this pack reveal. Please use /last_pack to check your latest pull.",
                 ephemeral=True
             )
-    return
+        return
     except Exception as e:
         msg = str(e)
         if any(x in msg.lower() for x in ("upstream_timeout", "502", "bad gateway", "timeout")):
