@@ -12,7 +12,11 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+<<<<<<< HEAD
 RARITY_ORDER = {"N":0, "R":1, "AR":2, "SR":3, "IR":4, "SSR":5}
+=======
+RARITY_ORDER = {"N":0, "R":1, "AR":2, "SR":3, "SSR":4}
+>>>>>>> 9f935724414ffdf2d823d3eacf5b1a555fb170a2
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
@@ -139,7 +143,11 @@ class RevealState(discord.ui.View):
         self.done = False
 
     async def _post_summary(self, itx: discord.Interaction):
+<<<<<<< HEAD
         rarity_em = {"N":"⚪","R":"🟦","AR":"🟪","SR":"🟧","IR":"🟣","SSR":"🟨"}
+=======
+        rarity_em = {"N":"⚪","R":"🟦","AR":"🟪","SR":"🟧","SSR":"🟨"}
+>>>>>>> 9f935724414ffdf2d823d3eacf5b1a555fb170a2
         lines = []
         for r in self.pulls_sorted:
             em = rarity_em.get(r.get("rarity",""), "📦")
@@ -156,6 +164,7 @@ class RevealState(discord.ui.View):
         await itx.followup.send(embed=emb)
 
         try:
+<<<<<<< HEAD
             if HYPE_CHANNEL_ID and (self.god or any(x.get("rarity") in ("SR", "IR", "SSR") for x in self.pulls_sorted)):
                 chan = bot.get_channel(HYPE_CHANNEL_ID)
                 if chan:
@@ -213,6 +222,85 @@ class RevealState(discord.ui.View):
 
 
 
+=======
+            if HYPE_CHANNEL_ID and (self.god or any(x.get("rarity") in ("SR","SSR") for x in self.pulls_sorted)):
+                # 1) get from cache, else fetch
+                chan = bot.get_channel(HYPE_CHANNEL_ID)
+                if chan is None:
+                    try:
+                        chan = await bot.fetch_channel(HYPE_CHANNEL_ID)
+                    except Exception as e:
+                        print("[hype] fetch_channel failed:", e)
+                        chan = None
+
+                # 2) if it’s a Forum parent, post to the current thread instead
+                if isinstance(chan, discord.ForumChannel):
+                    chan = itx.channel
+
+                if chan:
+                    user = itx.user.mention
+                    big = [x for x in self.pulls_sorted if x.get("rarity") in ("SR", "SSR")]
+                    if self.god:
+                        await chan.send(f"🎉 {user} just opened a **GOD PACK** in **{self.pack_name}**!")
+                    elif big:
+                        top = big[-1]
+                        msg = f"🎊 {user} just pulled a **{top.get('rarity')} {top.get('name')}**!"
+                        img = (top.get("image_ref") or "").strip()
+                        if img:
+                            emb = discord.Embed(
+                                color=0xFFD166 if top.get("rarity") == "SSR" else 0xFFA654,
+                                description=msg
+                            )
+                            emb.set_image(url=img)
+                            await chan.send(embed=emb)
+                        else:
+                            await chan.send(msg)
+        except Exception as e:
+            print("[hype] send failed:", e)
+
+
+        async def _maybe_hype(self, itx: discord.Interaction, card: dict):
+            """Post a hype message to HYPE_CHANNEL_ID for SR/SSR or God Pack (once)."""
+            # Channel configured?
+            if not HYPE_CHANNEL_ID:
+                return
+            chan = bot.get_channel(HYPE_CHANNEL_ID)
+            if not chan:
+                return
+
+            # God Pack? (announce once per session)
+            try:
+                if self.god and not getattr(self, "_hyped_god", False):
+                    self._hyped_god = True
+                    await chan.send(
+                        f"💥 {itx.user.mention} just opened a **GOD PACK** in **{self.pack_name}**!!!"
+                    )
+                    # don't return; still allow individual SR/SSR hype too if you want
+            except Exception:
+                pass
+
+            # Card-based hype (SR or above)
+            rarity = (card.get("rarity") or "").upper()
+            if rarity not in ("SR", "SSR"):
+                return
+
+            name = card.get("name") or "Unknown"
+            try:
+                msg = f"{itx.user.mention} just pulled out a **{rarity} {name}**!!! Congrats!"
+                img = card.get("image_ref")
+                if img:
+                    emb = discord.Embed(color=0xFFD166 if rarity == "SSR" else 0xFFA654)
+                    emb.set_image(url=img)
+                    await chan.send(msg, embed=emb)
+                else:
+                    await chan.send(msg)
+            except Exception:
+                # Never let hype failures break the reveal flow.
+                pass
+
+
+
+>>>>>>> 9f935724414ffdf2d823d3eacf5b1a555fb170a2
     @discord.ui.button(label="Reveal Next", style=discord.ButtonStyle.primary)
     async def reveal_next(self, itx: discord.Interaction, _button: discord.ui.Button):
         if itx.user.id != self.owner_id:
@@ -230,7 +318,11 @@ class RevealState(discord.ui.View):
             await itx.message.edit(view=None)
         except Exception:
             pass
+<<<<<<< HEAD
         rarity_em = {"N":"⚪","R":"🟦","AR":"🟪","SR":"🟧","IR":"🟣","SSR":"🟨"}
+=======
+        rarity_em = {"N":"⚪","R":"🟦","AR":"🟪","SR":"🟧","SSR":"🟨"}
+>>>>>>> 9f935724414ffdf2d823d3eacf5b1a555fb170a2
         name   = card.get("name", "(unknown)")
         rarity = card.get("rarity", "")
         serial = card.get("serial_no")
@@ -509,6 +601,7 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
             "page": 1,
             "page_size": PACK_SIZE * 2,
             "unique_only": False,
+<<<<<<< HEAD
             "rarity": "ALL", "position": "ALL", "batch": "ALL",
         })
         items = (col or {}).get("items") or []
@@ -517,6 +610,30 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
             except: return 0
         recent = [it for it in items if ts(it) >= started_ms - 200000]
         pool = recent[:PACK_SIZE] or items[:PACK_SIZE]
+=======
+            "rarity": "ALL",
+            "position": "ALL",
+            "batch": "ALL",
+        })
+
+        items = (col or {}).get("items") or []
+
+        def ts(it):
+            try:
+                return int(it.get("acquired_ts") or it.get("ts") or 0)
+            except:
+                return 0
+
+        # Only take cards acquired in this session window
+        recent = [it for it in items if ts(it) >= started_ms - 200000]
+
+        pool = recent[:PACK_SIZE]
+
+        # ❌ IMPORTANT: do NOT fallback to inventory top cards
+        if len(pool) < PACK_SIZE:
+            return []
+
+>>>>>>> 9f935724414ffdf2d823d3eacf5b1a555fb170a2
         return [_normalize_card(it) for it in pool]
 
     try:
@@ -535,6 +652,7 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
                 cards,
                 pack_name=pack_name,
                 god=bool(body.get("godPack")),
+<<<<<<< HEAD
             )
             return
         recovered = await _recover_from_collection()
@@ -547,6 +665,24 @@ async def open_pack(interaction: discord.Interaction, pack: str = "Base Pack"):
             )
         else:
             await interaction.followup.send("⚠️ Pack did not open (no new cards). Please try again.", ephemeral=True)
+=======
+            )
+            return
+        recovered = await _recover_from_collection()
+        if recovered and len(recovered) == PACK_SIZE:
+            await start_reveal_session(
+                interaction,
+                recovered,
+                pack_name=f"Recovered — {pack}",
+                god=False,
+            )
+        else:
+            await interaction.followup.send(
+                "⚠️ Could not safely recover this pack reveal. Please use /last_pack to check your latest pull.",
+                ephemeral=True
+            )
+        return
+>>>>>>> 9f935724414ffdf2d823d3eacf5b1a555fb170a2
     except Exception as e:
         msg = str(e)
         if any(x in msg.lower() for x in ("upstream_timeout", "502", "bad gateway", "timeout")):
@@ -679,7 +815,11 @@ async def grant(
 
 
 # --- Collection ---
+<<<<<<< HEAD
 RARITY_CHOICES = [app_commands.Choice(name=x, value=x) for x in ["ALL","N","R","AR","SR","IR","SSR"]]
+=======
+RARITY_CHOICES = [app_commands.Choice(name=x, value=x) for x in ["ALL","N","R","AR","SR","SSR"]]
+>>>>>>> 9f935724414ffdf2d823d3eacf5b1a555fb170a2
 POSITION_CHOICES = [app_commands.Choice(name=x, value=x) for x in [
     "ALL","GK","ST","LW","RW","AM","CM","DM","LB","RB","CB"
 ]]
@@ -755,7 +895,15 @@ async def resync(interaction: discord.Interaction):
 
 @bot.tree.command(name="craft", description="Craft a card by card_id (uses your crafting costs).")
 @app_commands.guilds(discord.Object(id=GID))
+<<<<<<< HEAD
 @app_commands.describe(card_id="Pick a card (type to search by name/club/id)", quantity="How many to craft", reason="Optional note for ledger")
+=======
+@app_commands.describe(
+    card_id="Pick a card (type to search by name/club/id)",
+    quantity="How many to craft",
+    reason="Optional note for ledger"
+)
+>>>>>>> 9f935724414ffdf2d823d3eacf5b1a555fb170a2
 @app_commands.autocomplete(card_id=ac_card_id)
 async def craft(interaction: discord.Interaction, card_id: str, quantity: int = 1, reason: str = "craft via bot"):
     if not await ensure_channel(interaction):
@@ -763,6 +911,7 @@ async def craft(interaction: discord.Interaction, card_id: str, quantity: int = 
     await interaction.response.defer(ephemeral=True)
 
     try:
+<<<<<<< HEAD
         payload = {
             "user_id": str(interaction.user.id),
             "card_id": card_id.strip(),
@@ -826,6 +975,65 @@ async def craft(interaction: discord.Interaction, card_id: str, quantity: int = 
         )
         if bal_bits:
             emb.set_footer(text="Balance: " + " | ".join(bal_bits))
+=======
+        card_id = (card_id or "").strip()
+        qty = max(1, int(quantity))
+
+        # 1) Lookup rarity for this card_id (Apps Script apiCards_ supports `search`)
+        cards_res = await call_sheet("cards", {"search": card_id})
+        cards_data = cards_res.get("data", cards_res) if isinstance(cards_res, dict) else cards_res
+        items = (cards_data.get("items") or []) if isinstance(cards_data, dict) else []
+
+        # find exact match
+        meta = next((it for it in items if str(it.get("card_id", "")).strip() == card_id), None)
+        if not meta:
+            return await interaction.followup.send(f"⚠️ Could not find card metadata for `{card_id}`.", ephemeral=True)
+
+        rarity = (meta.get("rarity") or "").strip().upper()
+        if not rarity:
+            return await interaction.followup.send(
+                f"⚠️ `{card_id}` has no rarity (might be a utility). Crafting is for player rarities only.",
+                ephemeral=True
+            )
+
+        # 2) Craft loop (backend crafts 1 per call)
+        crafted_all = []
+        last_balance = None
+        for _ in range(qty):
+            res = await call_sheet("craft", {
+                "user_id": str(interaction.user.id),
+                "rarity": rarity,
+                "mode": "specific",
+                "card_id": card_id,
+                "reason": reason,
+            })
+            data = res.get("data", res) if isinstance(res, dict) else res
+            if isinstance(data, dict) and data.get("error"):
+                return await interaction.followup.send(f"⚠️ Craft error: {data.get('error')}", ephemeral=True)
+
+            crafted = data.get("crafted") or []
+            if isinstance(crafted, dict):
+                crafted = [crafted]
+            crafted_all.extend(crafted)
+            last_balance = data.get("balance", last_balance)
+
+        # 3) Build output
+        lines = []
+        for i, it in enumerate(crafted_all, 1):
+            cid = it.get("card_id") or card_id
+            rr  = (it.get("rarity") or rarity).strip().upper()
+            sn  = it.get("serial_no") or it.get("serial")
+            sn_txt = f" #{sn}" if sn not in (None, "", 0) else ""
+            lines.append(f"{i}. **{cid}** [{rr}]{sn_txt}")
+
+        emb = discord.Embed(
+            title=f"🛠️ Crafted ×{qty} — {card_id}",
+            description="**Yield**\n" + "\n".join(lines) if lines else "Crafted successfully.",
+            color=discord.Color.green(),
+        )
+        if last_balance is not None:
+            emb.set_footer(text=f"Tokens balance: {int(float(last_balance))}")
+>>>>>>> 9f935724414ffdf2d823d3eacf5b1a555fb170a2
 
         await interaction.followup.send(embed=emb, ephemeral=True)
 
@@ -833,6 +1041,10 @@ async def craft(interaction: discord.Interaction, card_id: str, quantity: int = 
         await interaction.followup.send(f"⚠️ Error: {e}", ephemeral=True)
 
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 9f935724414ffdf2d823d3eacf5b1a555fb170a2
 @bot.tree.command(name="shop", description="View shop or buy an item by ID.")
 @app_commands.guilds(discord.Object(id=GID))
 @app_commands.describe(buy_item_id="Item/sku ID to buy (leave empty to list)", quantity="How many to buy")
@@ -879,6 +1091,7 @@ async def shop(interaction: discord.Interaction, buy_item_id: str = "", quantity
 
             return
 
+<<<<<<< HEAD
         # BUY
         payload = {
             "user_id": str(interaction.user.id),
@@ -889,6 +1102,25 @@ async def shop(interaction: discord.Interaction, buy_item_id: str = "", quantity
             "op": "buy",
         }
         res  = await call_sheet("shop", payload)
+=======
+        # BUY (utilities) — use the dedicated apiBuy_ endpoint
+        payload = {
+            "user_id": str(interaction.user.id),
+            "card_id": buy_item_id,
+        }
+        # apiBuy_ buys exactly 1 per call; loop if qty > 1
+        results = []
+        last_balance = None
+        for _ in range(qty):
+            res = await call_sheet("buy", payload)
+            data = res.get("data", res) if isinstance(res, dict) else {}
+            if isinstance(data, dict) and data.get("error"):
+                return await interaction.followup.send(f"⚠️ Purchase failed: {data['error']}", ephemeral=True)
+            bought = data.get("bought") or {}
+            if bought:
+                results.append(bought)
+            last_balance = data.get("balance", last_balance)
+>>>>>>> 9f935724414ffdf2d823d3eacf5b1a555fb170a2
         data = res.get("data", res) if isinstance(res, dict) else {}
         if isinstance(data, dict) and (data.get("error") or res.get("error")):
             err = data.get("error") or res.get("error")
@@ -906,12 +1138,20 @@ async def shop(interaction: discord.Interaction, buy_item_id: str = "", quantity
         if isinstance(bought, dict):
             bought = [bought]
         yield_lines = []
+<<<<<<< HEAD
         for i, it in enumerate(bought, 1):
             nm = it.get("name") or it.get("player") or it.get("title") or it.get("card_id") or buy_item_id
             rr = (it.get("rarity") or "").strip()
             sn = it.get("serial") or it.get("serial_no")
             sn_txt = f" #{sn}" if sn not in (None, "", 0) else ""
             yield_lines.append(f"{i}. **{nm}** {f'[{rr}]' if rr else ''}{sn_txt}")
+=======
+        for i, it in enumerate(results, 1):
+            cid = it.get("card_id") or buy_item_id
+            price = it.get("price")
+            price_txt = f" (−{int(price)} tokens)" if price not in (None, "", 0) else ""
+            yield_lines.append(f"{i}. `{cid}`{price_txt}")
+>>>>>>> 9f935724414ffdf2d823d3eacf5b1a555fb170a2
 
         # Balances
         tickets_bal = data.get("tickets_balance")
@@ -928,11 +1168,20 @@ async def shop(interaction: discord.Interaction, buy_item_id: str = "", quantity
 
         emb = discord.Embed(
             title=f"✅ Purchased — {buy_item_id} ×{qty}",
+<<<<<<< HEAD
             description="\n\n".join(sections) if sections else "Purchase complete.",
             color=discord.Color.green(),
         )
         if bal_bits:
             emb.set_footer(text="Balance: " + " | ".join(bal_bits))
+=======
+            description="**Yield**\n" + "\n".join(yield_lines) if yield_lines else "Purchase complete.",
+            color=discord.Color.green(),
+        )
+        if last_balance is not None:
+            emb.set_footer(text=f"Tokens balance: {int(float(last_balance))}")
+
+>>>>>>> 9f935724414ffdf2d823d3eacf5b1a555fb170a2
 
         await interaction.followup.send(embed=emb, ephemeral=True)
 
