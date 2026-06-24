@@ -683,7 +683,7 @@ RARITY_CHOICES = [app_commands.Choice(name=x, value=x) for x in ["ALL","N","R","
 POSITION_CHOICES = [app_commands.Choice(name=x, value=x) for x in [
     "ALL","GK","ST","LW","RW","AM","CM","DM","LB","RB","CB"
 ]]
-BATCH_CHOICES = [app_commands.Choice(name=x, value=x) for x in ["ALL","Base","Base U"]]
+BATCH_CHOICES = [app_commands.Choice(name=x, value=x) for x in ["ALL","Base2526","Base U"]]
 
 @bot.tree.command(name="collection", description="View your collection as an image gallery (10 per page).")
 @app_commands.guilds(discord.Object(id=GID))
